@@ -399,6 +399,11 @@ function M.toggle()
 		if opts.auto_unsplit then
 			unsplit_buffer(state.buf)
 		end
+
+		-- Clear diagnostics using the existing validation function
+		local tags = require('caption-editor.tags')
+		tags.validate_buffer(state.buf)
+
 		state.active = false
 		state.buf = nil
 		state.original_content = nil

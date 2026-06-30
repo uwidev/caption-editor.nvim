@@ -2,18 +2,22 @@
 
 local defaults = {
 	keymaps = {
-		toggle = "<leader>ce",  -- Caption Editor toggle
+		toggle = "<leader>ce",
 	},
-	auto_split = true,          -- Auto-split when toggled on
-	auto_unsplit = true,        -- Auto-unsplit when toggled off or buffer changes
-	delimiter = ",",            -- Delimiter for splitting tags
-	space_after_delimiter = true, -- Add space after delimiter when joining
-	section_delimiter = "|||",  -- Delimiter between sections
-	section_types = {           -- Define type for each section (1-indexed)
-		"tags",  -- Section 1: tags
-		"tags",  -- Section 2: tags
-		"nl",    -- Section 3: natural language passage
-		-- Sections 4+ default to "tags"
+	auto_split = true,
+	auto_unsplit = true,
+	delimiter = ",",
+	space_after_delimiter = true,
+	section_delimiter = "|||",
+	section_types = {
+		"tags",
+		"tags",
+		"nl",
+	},
+	tag_validation = {
+		enabled = false,
+		tag_file = "",
+		auto_validate = true,
 	},
 }
 
@@ -67,6 +71,23 @@ local function validate_config(opts)
 					valid.section_types[i] = "tags"
 				end
 			end
+		end
+	end
+
+	if valid.tag_validation then
+		if valid.tag_validation.enabled ~= nil and type(valid.tag_validation.enabled) ~= "boolean" then
+			vim.notify("caption-editor: tag_validation.enabled must be a boolean, using default", vim.log.levels.WARN)
+			valid.tag_validation.enabled = defaults.tag_validation.enabled
+		end
+
+		if valid.tag_validation.tag_file and type(valid.tag_validation.tag_file) ~= "string" then
+			vim.notify("caption-editor: tag_validation.tag_file must be a string, using default", vim.log.levels.WARN)
+			valid.tag_validation.tag_file = defaults.tag_validation.tag_file
+		end
+
+		if valid.tag_validation.auto_validate ~= nil and type(valid.tag_validation.auto_validate) ~= "boolean" then
+			vim.notify("caption-editor: tag_validation.auto_validate must be a boolean, using default", vim.log.levels.WARN)
+			valid.tag_validation.auto_validate = defaults.tag_validation.auto_validate
 		end
 	end
 
