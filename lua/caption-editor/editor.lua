@@ -5,19 +5,148 @@ local config = require('caption-editor.config')
 
 local state = {
 	active = false,
-	buf = nil,  -- Current buffer being edited
-	original_content = nil,  -- Store original content for restore
+	buf = nil,
+	original_content = nil,
 }
 
--- Split tags into separate lines
-local function split_tags(content, delimiter)
-	if not content or content == '' then
+-- Generic split function
+local function split(content, delimiter, keep_empty)
+	if not content then
 		return {}
 	end
 
+	if keep_empty == nil then
+		keep_empty = true
+	end
+
+	local parts = {}
+	local start = 1
+	local delim_len = #delimiter
+
+	if content == '' then
+		if keep_empty then
+			return { "" }
+		end
+		return {}
+	end
+
+	while true do
+		local pos = content:find(delimiter, start, true)
+		if not pos then
+			local part = content:sub(start)
+			if keep_empty then
+				table.insert(parts, part)
+			else
+				local cleaned = part:match("^%s*(.-)%s*$")
+				if cleaned and cleaned ~= '' then
+					table.insert(parts, cleaned)
+				end
+			end
+			break
+		else
+			local part = content:sub(start, pos - 1)
+			if keep_empty then
+				table.insert(parts, part)
+			else
+				local cleaned = part:match("^%s*(.-)%s*$")
+				if cleaned and cleaned ~= '' then
+					table.insert(parts, cleaned)
+				end
+			end
+			start = pos + delim_len
+		end
+	end
+
+	return parts
+end
+
+-- Split text by sentences (., !, ?)
+-- Hardcoded to handle decimals (e.g., 6.25)
+local function split_sentences(text)
+	if not text or text == '' then
+		return {}
+	end
+
+	if not text:find("[.!?]") then
+		local cleaned = text:match("^%s*(.-)%s*$")
+		return cleaned and cleaned ~= '' and { cleaned } or {}
+	end
+
+	local sentences = {}
+	local current = ""
+	local i = 1
+
+	while i <= #text do
+		local char = text:sub(i, i)
+
+		if char:match("[.!?]") then
+			local prev_char = i > 1 and text:sub(i-1, i-1) or ""
+			local next_char = i < #text and text:sub(i+1, i+1) or ""
+
+			if prev_char:match("%d") and next_char:match("%d") then
+				current = current .. char
+				i = i + 1
+			else
+				current = current .. char
+				local cleaned = current:match("^%s*(.-)%s*$")
+				if cleaned and cleaned ~= '' then
+					table.insert(sentences, cleaned)
+				end
+				current = ""
+				i = i + 1
+
+				while i <= #text and text:sub(i, i):match("%s") do
+					i = i + 1
+				end
+			end
+		else
+			current = current .. char
+			i = i + 1
+		end
+	end
+
+	if current ~= '' then
+		local cleaned = current:match("^%s*(.-)%s*$")
+		if cleaned and cleaned ~= '' then
+			table.insert(sentences, cleaned)
+		end
+	end
+
+	if #sentences == 0 and text ~= '' then
+		local cleaned = text:match("^%s*(.-)%s*$")
+		return cleaned and cleaned ~= '' and { cleaned } or {}
+	end
+
+	return sentences
+end
+
+-- Join sentences
+local function join_sentences(sentences)
+	if not sentences or #sentences == 0 then
+		return ""
+	end
+
+	local cleaned = {}
+	for _, s in ipairs(sentences) do
+		local stripped = s:match("^%s*(.-)%s*$")
+		if stripped and stripped ~= '' then
+			table.insert(cleaned, stripped)
+		end
+	end
+
+	return table.concat(cleaned, " ")
+end
+
+-- Split tags by delimiter
+local function split_tags(content, delimiter)
+	if content == nil or content == '' then
+		return {}
+	end
+
+	local raw_tags = split(content, delimiter, true)
 	local tags = {}
-	for tag in string.gmatch(content, "[^" .. delimiter .. "]+") do
-		local cleaned = tag:match("^%s*(.-)%s*$")  -- Strip whitespace
+	for _, tag in ipairs(raw_tags) do
+		local cleaned = tag:match("^%s*(.-)%s*$")
 		if cleaned and cleaned ~= '' then
 			table.insert(tags, cleaned)
 		end
@@ -25,13 +154,12 @@ local function split_tags(content, delimiter)
 	return tags
 end
 
--- Join tags back into single line
-local function join_tags(tags, delimiter)
+-- Join tags
+local function join_tags(tags, delimiter, space_after)
 	if not tags or #tags == 0 then
 		return ""
 	end
 
-	-- Strip whitespace from each tag
 	local cleaned = {}
 	for _, tag in ipairs(tags) do
 		local stripped = tag:match("^%s*(.-)%s*$")
@@ -40,10 +168,46 @@ local function join_tags(tags, delimiter)
 		end
 	end
 
-	return table.concat(cleaned, delimiter)
+	local join_str = delimiter
+	if space_after then
+		join_str = delimiter .. " "
+	end
+
+	return table.concat(cleaned, join_str)
 end
 
--- Get current buffer content
+-- Get section type
+local function get_section_type(index, section_types)
+	if not section_types or #section_types == 0 then
+		return "tags"
+	end
+
+	if index <= #section_types then
+		return section_types[index]
+	end
+
+	return "tags"
+end
+
+-- Split a section based on its type
+local function split_section(section, section_type, delimiter)
+	if section_type == "nl" then
+		return split_sentences(section)
+	else
+		return split_tags(section, delimiter)
+	end
+end
+
+-- Join a section based on its type
+local function join_section(section, section_type, delimiter, space_after)
+	if section_type == "nl" then
+		return join_sentences(section)
+	else
+		return join_tags(section, delimiter, space_after)
+	end
+end
+
+-- Get buffer content
 local function get_buffer_content(buf)
 	if not buf or not vim.api.nvim_buf_is_valid(buf) then
 		return ""
@@ -63,15 +227,22 @@ local function set_buffer_content(buf, content)
 	vim.api.nvim_set_option_value('modifiable', true, { buf = buf })
 
 	local lines = {}
-	for line in string.gmatch(content, "[^\n]*") do
-		table.insert(lines, line)
+	for line in content:gmatch("[^\n]*") do
+		if line ~= '' then
+			table.insert(lines, line)
+		end
 	end
-	vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+
+	if #lines == 0 then
+		vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "" })
+	else
+		vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+	end
 
 	vim.api.nvim_set_option_value('modifiable', was_modifiable, { buf = buf })
 end
 
--- Check if buffer is a caption file
+-- Check if caption file
 local function is_caption_file(buf)
 	local filepath = vim.api.nvim_buf_get_name(buf)
 	if filepath == '' then
@@ -81,7 +252,16 @@ local function is_caption_file(buf)
 	return ext == 'txt'
 end
 
--- Split current buffer's tags into separate lines
+-- Check if section is empty
+local function is_empty_section(section)
+	if not section then
+		return true
+	end
+	local trimmed = section:match("^%s*(.-)%s*$")
+	return trimmed == nil or trimmed == ''
+end
+
+-- Split buffer
 local function split_buffer(buf)
 	if not buf or not vim.api.nvim_buf_is_valid(buf) then
 		return
@@ -89,25 +269,57 @@ local function split_buffer(buf)
 
 	local opts = config.get()
 	local content = get_buffer_content(buf)
-
-	-- Check if content has commas
-	if not content:find(",") then
-		return  -- Already split or no commas
+	if content:sub(-1) == "\n" then
+		content = content:sub(1, -2)
 	end
 
-	-- Store original content for restoration
+	if content == '' then
+		return
+	end
+
 	if not state.original_content then
 		state.original_content = content
 	end
 
-	local tags = split_tags(content, opts.delimiter)
-	local new_content = table.concat(tags, "\n")
-	set_buffer_content(buf, new_content)
+	local lines = {}
+	local raw_sections = split(content, opts.section_delimiter, true)
+	local sections = {}
+	for _, section in ipairs(raw_sections) do
+		local cleaned = section:match("^%s*(.-)%s*$")
+		if cleaned ~= nil then
+			table.insert(sections, cleaned)
+		else
+			table.insert(sections, "")
+		end
+	end
 
-	vim.notify("caption-editor: Split tags into " .. #tags .. " lines", vim.log.levels.INFO)
+	local num_sections = #sections
+
+	for i, section in ipairs(sections) do
+		local is_empty = is_empty_section(section)
+		local section_type = get_section_type(i, opts.section_types)
+
+		if not is_empty then
+			local items = split_section(section, section_type, opts.delimiter)
+			for _, item in ipairs(items) do
+				table.insert(lines, item)
+			end
+		end
+
+		if i < num_sections then
+			table.insert(lines, opts.section_delimiter)
+		end
+	end
+
+	while #lines > 0 and lines[#lines] == opts.section_delimiter do
+		table.remove(lines)
+	end
+
+	local new_content = table.concat(lines, "\n")
+	set_buffer_content(buf, new_content)
 end
 
--- Unsplit buffer back to single line
+-- Unsplit buffer
 local function unsplit_buffer(buf)
 	if not buf or not vim.api.nvim_buf_is_valid(buf) then
 		return
@@ -115,36 +327,74 @@ local function unsplit_buffer(buf)
 
 	local opts = config.get()
 	local content = get_buffer_content(buf)
-
-	-- Check if content has newlines (already split)
-	if not content:find("\n") then
-		return  -- Already on single line
+	if content:sub(-1) == "\n" then
+		content = content:sub(1, -2)
 	end
 
-	local tags = {}
-	for line in string.gmatch(content, "[^\n]*") do
-		local cleaned = line:match("^%s*(.-)%s*$")
-		if cleaned and cleaned ~= '' then
-			table.insert(tags, cleaned)
+	if content == '' then
+		return
+	end
+
+	local lines = {}
+	for line in content:gmatch("[^\n]*") do
+		table.insert(lines, line)
+	end
+
+	if #lines == 0 then
+		set_buffer_content(buf, "")
+		return
+	end
+
+	local sections = {}
+	local current_section = {}
+
+	for _, line in ipairs(lines) do
+		local trimmed = line:match("^%s*(.-)%s*$")
+		if trimmed == opts.section_delimiter then
+			table.insert(sections, current_section)
+			current_section = {}
+		else
+			table.insert(current_section, line)
+		end
+	end
+	table.insert(sections, current_section)
+
+	local parts = {}
+
+	for i, section in ipairs(sections) do
+		local is_empty = true
+		for _, line in ipairs(section) do
+			local trimmed = line:match("^%s*(.-)%s*$")
+			if trimmed and trimmed ~= '' then
+				is_empty = false
+				break
+			end
+		end
+
+		local section_type = get_section_type(i, opts.section_types)
+
+		if not is_empty then
+			local joined = join_section(section, section_type, opts.delimiter, opts.space_after_delimiter)
+			table.insert(parts, joined)
+		else
+			table.insert(parts, "")
 		end
 	end
 
-	local new_content = join_tags(tags, opts.delimiter)
+	local section_join_str = " " .. opts.section_delimiter .. " "
+	local new_content = table.concat(parts, section_join_str)
+
 	set_buffer_content(buf, new_content)
 end
 
--- Toggle editing mode on/off
 function M.toggle()
 	local current_buf = vim.api.nvim_get_current_buf()
 
-	-- If not in a caption file, do nothing
 	if not is_caption_file(current_buf) then
-		vim.notify("caption-editor: Not a caption file", vim.log.levels.WARN)
 		return
 	end
 
 	if state.active then
-		-- Turn off: unsplit if auto_unsplit is enabled
 		local opts = config.get()
 		if opts.auto_unsplit then
 			unsplit_buffer(state.buf)
@@ -152,9 +402,7 @@ function M.toggle()
 		state.active = false
 		state.buf = nil
 		state.original_content = nil
-		vim.notify("caption-editor: Disabled", vim.log.levels.INFO)
 	else
-		-- Turn on: split if auto_split is enabled
 		local opts = config.get()
 		state.buf = current_buf
 		state.original_content = get_buffer_content(current_buf)
@@ -164,11 +412,9 @@ function M.toggle()
 		end
 
 		state.active = true
-		vim.notify("caption-editor: Enabled", vim.log.levels.INFO)
 	end
 end
 
--- Handle buffer changes (unsplit old, split new)
 function M.on_buffer_change()
 	if not state.active then
 		return
@@ -176,35 +422,28 @@ function M.on_buffer_change()
 
 	local current_buf = vim.api.nvim_get_current_buf()
 
-	-- If we're already editing this buffer, do nothing
 	if state.buf == current_buf then
 		return
 	end
 
-	-- If not a caption file, do nothing
 	if not is_caption_file(current_buf) then
 		return
 	end
 
 	local opts = config.get()
 
-	-- Unsplit the previous buffer
 	if state.buf and vim.api.nvim_buf_is_valid(state.buf) and opts.auto_unsplit then
 		unsplit_buffer(state.buf)
 	end
 
-	-- Split the new buffer
 	state.buf = current_buf
 	state.original_content = get_buffer_content(current_buf)
 
 	if opts.auto_split then
 		split_buffer(current_buf)
 	end
-
-	vim.notify("caption-editor: Switched to " .. vim.api.nvim_buf_get_name(current_buf), vim.log.levels.INFO)
 end
 
--- Handle buffer writes (unsplit before save, split after)
 function M.on_buffer_write()
 	if not state.active then
 		return
@@ -216,14 +455,10 @@ function M.on_buffer_write()
 	end
 
 	local opts = config.get()
-
-	-- Get current content before unsplitting
 	local content = get_buffer_content(current_buf)
 
-	-- If content has newlines, unsplit for saving
 	if content:find("\n") then
 		unsplit_buffer(current_buf)
-		-- Schedule resplit after save
 		vim.defer_fn(function()
 			if state.active and state.buf == current_buf and opts.auto_split then
 				split_buffer(current_buf)
@@ -232,13 +467,11 @@ function M.on_buffer_write()
 	end
 end
 
--- Clean up on close
 function M.on_buffer_delete(buf)
 	if state.active and state.buf == buf then
 		state.active = false
 		state.buf = nil
 		state.original_content = nil
-		vim.notify("caption-editor: Disabled (buffer closed)", vim.log.levels.INFO)
 	end
 end
 
