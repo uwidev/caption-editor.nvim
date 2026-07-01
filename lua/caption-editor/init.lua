@@ -11,33 +11,11 @@ function M.setup(opts)
 
 	local opts_config = config.get()
 
-	-- Load tag validation
+	-- Load tag validation (lazy: only store the path)
 	if opts_config.tag_validation and opts_config.tag_validation.enabled then
 		local tag_file = opts_config.tag_validation.tag_file
 		if tag_file and tag_file ~= "" then
-			tags.load_tags(tag_file)
-
-			-- Validation autocmds (with buffer validation)
-			if opts_config.tag_validation and opts_config.tag_validation.enabled then
-				if opts_config.tag_validation.auto_validate ~= false then
-					vim.api.nvim_create_autocmd({ "BufEnter", "TextChanged", "TextChangedI" }, {
-						group = group,
-						callback = function()
-							local state = editor.get_state()
-							if state.active then
-								local buf = vim.api.nvim_get_current_buf()
-								local buftype = vim.api.nvim_get_option_value("buftype", { buf = buf })
-								local filepath = vim.api.nvim_buf_get_name(buf)
-								local ext = vim.fn.fnamemodify(filepath, ":e"):lower()
-
-								if buftype == "" and filepath ~= "" and ext == "txt" then
-									tags.schedule_validate(buf)
-								end
-							end
-						end,
-					})
-				end
-			end
+			tags.set_tag_file(tag_file)   -- just store the path, load later
 		end
 	end
 
@@ -123,6 +101,29 @@ function M.setup(opts)
 			end
 		end,
 	})
+
+	-- Validation autocmds (with buffer validation) – these run only when tags are loaded
+	if opts_config.tag_validation and opts_config.tag_validation.enabled then
+		if opts_config.tag_validation.auto_validate ~= false then
+			vim.api.nvim_create_autocmd({ "BufEnter", "TextChanged", "TextChangedI" }, {
+				group = group,
+				callback = function()
+					local state = editor.get_state()
+					if state.active then
+						local buf = vim.api.nvim_get_current_buf()
+						local buftype = vim.api.nvim_get_option_value("buftype", { buf = buf })
+						local filepath = vim.api.nvim_buf_get_name(buf)
+						local ext = vim.fn.fnamemodify(filepath, ":e"):lower()
+
+						if buftype == "" and filepath ~= "" and ext == "txt" then
+							-- This will trigger lazy loading of tags if needed
+							tags.schedule_validate(buf)
+						end
+					end
+				end,
+			})
+		end
+	end
 end
 
 M.config = config

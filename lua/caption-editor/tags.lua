@@ -8,11 +8,31 @@ local config = require("caption-editor.config")
 -- State
 local valid_tags = {}
 local tag_file_path = ""
+local tags_loaded = false
 local suggestion_cache = {}
 local diagnostic_cache = {}
 local validate_timer = nil
 local spell_ns = vim.api.nvim_create_namespace("caption-spell")
 local quickfix_open = false
+
+-- Store the tag file path for lazy loading
+function M.set_tag_file(filepath)
+	tag_file_path = filepath
+	tags_loaded = false  -- will load on first use
+end
+
+-- Ensure tags are loaded
+local function ensure_tags_loaded()
+	if tags_loaded then
+		return
+	end
+	if tag_file_path == "" then
+		vim.notify("caption-editor: No tag file configured. Set tag_validation.tag_file.", vim.log.levels.WARN)
+		return
+	end
+	M.load_tags(tag_file_path)
+	tags_loaded = true
+end
 
 -- Build search command based on program
 local function build_search_command(query, limit, program, tag_file)
@@ -127,7 +147,7 @@ local function token_similarity_score(query, tag)
 	return score
 end
 
--- Load tags from file
+-- Load tags from file (called lazily)
 function M.load_tags(filepath)
 	if not filepath or filepath == "" then
 		return
@@ -154,6 +174,7 @@ end
 
 -- Check if tag is valid
 function M.is_valid_tag(tag)
+	ensure_tags_loaded()
 	if not tag or tag == "" then
 		return false
 	end
@@ -188,6 +209,7 @@ end
 
 -- Get suggestions from search program (with algorithm selection)
 function M.get_suggestions(query, limit)
+	ensure_tags_loaded()
 	if not query or query == "" or tag_file_path == "" then
 		return {}
 	end
@@ -196,11 +218,10 @@ function M.get_suggestions(query, limit)
 		return suggestion_cache[query]
 	end
 
-	-- Get suggestions from search tool (with ranking selection)
 	limit = limit or 10
 	local opts = config.get()
 	local program = opts.tag_validation.search_tool or "rg"
-	local algorithm = opts.tag_validation.rank_method or "raw" -- raw, no ranking, just raw output from search_tool
+	local algorithm = opts.tag_validation.rank_method or "raw"
 	local max_candidates = opts.tag_validation.max_candidates or 200
 
 	local results = {}
@@ -242,26 +263,21 @@ function M.get_suggestions(query, limit)
 					token_score = token_similarity_score(query, tag)
 					final_score = token_score
 				else -- hybrid
-					-- Levenshtein score (normalized 0-100)
 					local dist = levenshtein_distance(query:lower(), tag:lower())
 					lev_score = math.max(0, 100 - (dist / math.max(#query, #tag) * 100))
 
-					-- Token score (0-100)
 					token_score = token_similarity_score(query, tag)
 
-					-- Exact match bonus
 					local exact_bonus = 0
 					if tag:lower() == query:lower() then
 						exact_bonus = 100
 					end
 
-					-- Prefix bonus
 					local prefix_bonus = 0
 					if tag:lower():find(query:lower(), 1, true) == 1 then
 						prefix_bonus = 20
 					end
 
-					-- Combine: 40% Levenshtein + 40% Token + 20% bonuses
 					final_score = (lev_score * 0.35) + (token_score * 0.35) + exact_bonus + prefix_bonus
 				end
 
@@ -351,6 +367,7 @@ end
 
 -- Schedule validation with configurable debounce
 function M.schedule_validate(buf)
+	ensure_tags_loaded()
 	if validate_timer then
 		validate_timer:stop()
 		validate_timer:close()
@@ -368,6 +385,7 @@ end
 
 -- Validate buffer
 function M.validate_buffer(buf)
+	ensure_tags_loaded()
 	if not buf then
 		buf = vim.api.nvim_get_current_buf()
 	else
@@ -392,7 +410,6 @@ function M.validate_buffer(buf)
 	local opts = config.get()
 	local force_spellcheck = opts.tag_validation.force_spellcheck
 
-	-- Handle spellcheck based on user config
 	local win = vim.api.nvim_get_current_win()
 	local spell_enabled = vim.api.nvim_get_option_value("spell", { win = win })
 
@@ -407,7 +424,6 @@ function M.validate_buffer(buf)
 			spell_enabled = false
 		end
 	end
-	-- nil: respect user's existing settings, do nothing
 
 	local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
 	local tag_diagnostics = {}
@@ -420,7 +436,6 @@ function M.validate_buffer(buf)
 			local in_tags_section = M.is_in_tags_section(buf, line_num - 1)
 
 			if in_tags_section then
-				-- Tags section: validate against booru tags
 				if not M.is_valid_tag(trimmed) then
 					local col = line:find(trimmed) or 1
 
@@ -435,7 +450,6 @@ function M.validate_buffer(buf)
 					})
 				end
 			else
-				-- NL section: use spellcheck if enabled
 				if spell_enabled then
 					for _, word_info in ipairs(get_words(line)) do
 						local word = word_info.word
@@ -490,6 +504,7 @@ end
 
 -- Quick fix
 function M.fix_tag()
+	ensure_tags_loaded()
 	local buf = vim.api.nvim_get_current_buf()
 	local cursor = vim.api.nvim_win_get_cursor(0)
 
@@ -518,7 +533,6 @@ function M.fix_tag()
 	local function apply_fix(choice)
 		vim.api.nvim_buf_set_text(buf, cursor[1] - 1, start, cursor[1] - 1, end_pos, { choice })
 		vim.api.nvim_win_set_cursor(0, { cursor[1], start + #choice })
-		-- Only update diagnostics, leave quickfix untouched
 		M.validate_buffer(buf)
 		vim.notify("Fixed: " .. tag .. " -> " .. choice, vim.log.levels.INFO)
 	end
@@ -542,9 +556,9 @@ function M.is_quickfix_open()
 	return quickfix_open
 end
 
--- List invalid tags in quickfix (preserves selection index for :cnext/:cprev)
+-- List invalid tags in quickfix
 function M.list_invalid_tags(buf)
-	-- Use provided buffer or fallback to current buffer
+	ensure_tags_loaded()
 	if not buf then
 		buf = vim.api.nvim_get_current_buf()
 	else
@@ -558,7 +572,6 @@ function M.list_invalid_tags(buf)
 	local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
 	local qf_list = {}
 
-	-- Save current quickfix selection index (1-based)
 	local saved_idx = 1
 	if quickfix_open then
 		local info = vim.fn.getqflist({ idx = 0 })
@@ -612,10 +625,8 @@ function M.list_invalid_tags(buf)
 		return
 	end
 
-	-- Clamp saved index to valid range
 	local clamped_idx = math.min(saved_idx, #qf_list)
 
-	-- Set new list and restore selection index
 	vim.fn.setqflist({}, "r", {
 		items = qf_list,
 		idx = clamped_idx,
@@ -624,7 +635,6 @@ function M.list_invalid_tags(buf)
 	if not quickfix_open then
 		vim.cmd("copen")
 		quickfix_open = true
-		-- copen may reset the index, restore it again
 		vim.fn.setqflist({}, "a", { idx = clamped_idx })
 	end
 end
@@ -647,15 +657,13 @@ function M.clear_all_diagnostics(buf)
 		return
 	end
 
-	-- Clear tag diagnostics
 	vim.diagnostic.reset(ns, buf)
-
-	-- Clear spell diagnostics
 	vim.diagnostic.reset(spell_ns, buf)
 end
 
 -- Refresh both diagnostics and quickfix list (manual refresh)
 function M.refresh_all(buf)
+	ensure_tags_loaded()
 	if not buf then
 		buf = vim.api.nvim_get_current_buf()
 	else
