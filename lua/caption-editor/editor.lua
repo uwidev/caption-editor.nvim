@@ -219,7 +219,7 @@ local function get_buffer_content(buf)
 end
 
 -- Set buffer content
-local function set_buffer_content(buf, content)
+local function set_buffer_content(buf, content, no_undo)
 	if not buf or not vim.api.nvim_buf_is_valid(buf) then
 		return
 	end
@@ -234,10 +234,23 @@ local function set_buffer_content(buf, content)
 		end
 	end
 
-	if #lines == 0 then
-		vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "" })
+	if no_undo then
+		local saved_undolevels = vim.o.undolevels
+		vim.o.undolevels = -1
+
+		if #lines == 0 then
+			vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "" })
+		else
+			vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+		end
+
+		vim.o.undolevels = saved_undolevels
 	else
-		vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+		if #lines == 0 then
+			vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "" })
+		else
+			vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+		end
 	end
 
 	vim.api.nvim_set_option_value('modifiable', was_modifiable, { buf = buf })
@@ -317,7 +330,7 @@ local function split_buffer(buf)
 	end
 
 	local new_content = table.concat(lines, "\n")
-	set_buffer_content(buf, new_content)
+	set_buffer_content(buf, new_content, true)
 end
 
 -- Unsplit buffer
@@ -342,7 +355,7 @@ local function unsplit_buffer(buf)
 	end
 
 	if #lines == 0 then
-		set_buffer_content(buf, "")
+		set_buffer_content(buf, "", true)
 		return
 	end
 
@@ -385,7 +398,7 @@ local function unsplit_buffer(buf)
 	local section_join_str = " " .. opts.section_delimiter .. " "
 	local new_content = table.concat(parts, section_join_str)
 
-	set_buffer_content(buf, new_content)
+	set_buffer_content(buf, new_content, true)
 end
 
 function M.toggle()
@@ -404,7 +417,7 @@ function M.toggle()
 		-- Clear diagnostics using the existing validation function
 		local tags = require('caption-editor.tags')
 		tags.validate_buffer(state.buf)
-		
+
 		-- Close quickfix when toggling off
 		tags.close_quickfix()
 
