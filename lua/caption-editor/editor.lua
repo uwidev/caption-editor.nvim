@@ -404,6 +404,9 @@ function M.toggle()
 		-- Clear diagnostics using the existing validation function
 		local tags = require('caption-editor.tags')
 		tags.validate_buffer(state.buf)
+		
+		-- Close quickfix when toggling off
+		tags.close_quickfix()
 
 		state.active = false
 		state.buf = nil

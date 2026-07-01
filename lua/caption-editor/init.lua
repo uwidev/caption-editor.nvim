@@ -87,6 +87,13 @@ function M.setup(opts)
 		pattern = "*.txt",
 		callback = function()
 			editor.on_buffer_change()
+			-- Update quickfix when switching buffers ONLY if quickfix is already open
+			if opts_config.tag_validation and opts_config.tag_validation.enabled then
+				local state = editor.get_state()
+				if state.active and tags.is_quickfix_open() then
+					tags.list_invalid_tags()
+				end
+			end
 		end,
 	})
 

@@ -12,6 +12,7 @@ local suggestion_cache = {}
 local diagnostic_cache = {}
 local validate_timer = nil
 local spell_ns = vim.api.nvim_create_namespace("caption-spell")
+local quickfix_open = false
 
 -- Build search command based on program
 local function build_search_command(query, limit, program, tag_file)
@@ -366,11 +367,24 @@ function M.fix_tag()
 	end)
 end
 
+-- Check if quickfix is open
+function M.is_quickfix_open()
+	return quickfix_open
+end
+
 -- List invalid tags in quickfix
 function M.list_invalid_tags()
 	local buf = vim.api.nvim_get_current_buf()
 	local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
 	local qf_list = {}
+
+	if not editor.get_state().active then
+		if quickfix_open then
+			vim.cmd("cclose")
+			quickfix_open = false
+		end
+		return
+	end
 
 	for line_num, line in ipairs(lines) do
 		local trimmed = line:match("^%s*(.-)%s*$")
@@ -401,13 +415,28 @@ function M.list_invalid_tags()
 	end
 
 	if #qf_list == 0 then
-		vim.notify("All tags are valid!", vim.log.levels.INFO)
+		if quickfix_open then
+			vim.fn.setqflist({}, "r")
+			vim.cmd("cclose")
+			quickfix_open = false
+		end
 		return
 	end
 
 	vim.fn.setqflist(qf_list, "r")
-	vim.cmd("copen")
-	vim.notify("Found " .. #qf_list .. " invalid tags in quickfix list", vim.log.levels.WARN)
+
+	if not quickfix_open then
+		vim.cmd("copen")
+		quickfix_open = true
+	end
+end
+
+-- Close quickfix
+function M.close_quickfix()
+	if quickfix_open then
+		vim.cmd("cclose")
+		quickfix_open = false
+	end
 end
 
 -- Fix all invalid tags
