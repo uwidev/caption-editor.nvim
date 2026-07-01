@@ -20,12 +20,12 @@ local defaults = {
 		auto_validate = true,
 		show_suggestions = true,
 		debounce_ms = 200,
-		search_tool = "rg", -- Tool to fetch candidates: rg, grep, ag, ack, git grep
-		force_spellcheck = nil, -- nil = respect user, true = force on, false = force off
-		rank_method = "hybrid", -- Ranking: raw, levenshtein, token, hybrid
-		max_candidates = 200, -- candidate pool size for ranking
-		suggestion_cache_ttl = 300, --seconds
-		suggestions_cache_limit = 100, -- max number of queries to cache
+		search_tool = "rg",
+		force_spellcheck = nil,
+		rank_method = "hybrid",
+		max_candidates = 200,
+		suggestion_cache_ttl = 300,
+		suggestion_cache_limit = 100,
 	},
 }
 

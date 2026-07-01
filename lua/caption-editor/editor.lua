@@ -8,7 +8,56 @@ local state = {
 	buf = nil,
 	original_content = nil,
 	saving = false,
+	orig_name = nil,
 }
+
+-- Store the original full path
+local function restore_buffer_name(buf)
+	if not buf or not vim.api.nvim_buf_is_valid(buf) then
+		return
+	end
+	if state.orig_name then
+		-- Restore the full path
+		vim.api.nvim_buf_set_name(buf, state.orig_name)
+		state.orig_name = nil
+	end
+end
+
+-- Set buffer name to short form with indicator
+local function set_buffer_name(buf, active)
+	if not buf or not vim.api.nvim_buf_is_valid(buf) then
+		return
+	end
+
+	local current = vim.api.nvim_buf_get_name(buf)
+	if current == "" then
+		return
+	end
+
+	if active then
+		if current:match("^%[CE%] ") then
+			return
+		end
+		-- Store the original full path only once
+		if not state.orig_name then
+			state.orig_name = current
+		end
+		-- Use only the filename (tail) for display
+		local tail = vim.fn.fnamemodify(current, ':t')
+		vim.api.nvim_buf_set_name(buf, "[CE] " .. tail)
+	else
+		if current:match("^%[CE%] ") then
+			-- Restore the full path
+			if state.orig_name then
+				vim.api.nvim_buf_set_name(buf, state.orig_name)
+				state.orig_name = nil
+			else
+				local stripped = current:gsub("^%[CE%] ", "")
+				vim.api.nvim_buf_set_name(buf, stripped)
+			end
+		end
+	end
+end
 
 -- Generic split function
 local function split(content, delimiter, keep_empty)
@@ -301,36 +350,36 @@ end
 
 -- Sync state with buffer content
 function M.sync_state(buf)
-    -- Don't sync state during save operations
-    if state.saving then
-        return
-    end
+	if state.saving then
+		return
+	end
 
-    if not buf then
-        buf = vim.api.nvim_get_current_buf()
-    end
-    
-    if not buf or not vim.api.nvim_buf_is_valid(buf) then
-        return
-    end
-    
-    if not is_caption_file(buf) then
-        return
-    end
-    
-    local is_split = is_buffer_split(buf)
-    
-    -- Only deactivate if the plugin is active but the buffer is no longer split.
-    -- Never auto-activate; activation should only happen via explicit toggle.
-    if state.active and not is_split then
-        state.active = false
-        state.buf = nil
-        state.original_content = nil
-        
-        local tags = require('caption-editor.tags')
-        tags.clear_all_diagnostics(buf)
-        tags.close_quickfix()
-    end
+	if not buf then
+		buf = vim.api.nvim_get_current_buf()
+	end
+
+	if not buf or not vim.api.nvim_buf_is_valid(buf) then
+		return
+	end
+
+	if not is_caption_file(buf) then
+		return
+	end
+
+	local is_split = is_buffer_split(buf)
+
+	if state.active and not is_split then
+		state.active = false
+		state.buf = nil
+		state.original_content = nil
+
+		-- Restore buffer name
+		restore_buffer_name(buf)
+
+		local tags = require('caption-editor.tags')
+		tags.clear_all_diagnostics(buf)
+		tags.close_quickfix()
+	end
 end
 
 -- Split buffer
@@ -482,6 +531,9 @@ function M.toggle()
 		tags.clear_all_diagnostics(state.buf)
 		tags.close_quickfix()
 
+		-- Restore original buffer name
+		restore_buffer_name(state.buf)
+
 		state.active = false
 		state.buf = nil
 		state.original_content = nil
@@ -497,6 +549,9 @@ function M.toggle()
 		if opts.auto_split then
 			split_buffer(current_buf)
 		end
+
+		-- Set buffer name with indicator
+		set_buffer_name(current_buf, true)
 
 		state.active = true
 
@@ -522,6 +577,11 @@ function M.on_buffer_change()
 
 	local opts = config.get()
 
+	-- Restore name of old buffer
+	if state.buf and vim.api.nvim_buf_is_valid(state.buf) then
+		restore_buffer_name(state.buf)
+	end
+
 	if state.buf and vim.api.nvim_buf_is_valid(state.buf) and opts.auto_unsplit then
 		unsplit_buffer(state.buf)
 	end
@@ -532,6 +592,9 @@ function M.on_buffer_change()
 	if opts.auto_split then
 		split_buffer(current_buf)
 	end
+
+	-- Set indicator on new buffer
+	set_buffer_name(current_buf, true)
 end
 
 function M.on_buffer_write()
@@ -576,6 +639,28 @@ end
 
 function M.get_state()
 	return state
+end
+
+function M.get_status()
+    return state.active and "[CE]" or ""
+end
+
+function M.update_winbar()
+    if not config.get().tag_validation.show_status then
+        return
+    end
+
+    local buf = vim.api.nvim_get_current_buf()
+    if not is_caption_file(buf) then
+        vim.opt_local.winbar = ""
+        return
+    end
+
+    if state.active then
+        vim.opt_local.winbar = "[CE]"
+    else
+        vim.opt_local.winbar = ""
+    end
 end
 
 return M
