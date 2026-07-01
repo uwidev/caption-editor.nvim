@@ -366,6 +366,11 @@ function M.sync_state(buf)
 		return
 	end
 
+	-- Only sync state if this buffer is the one being edited by the plugin
+	if buf ~= state.buf then
+		return
+	end
+
 	local is_split = is_buffer_split(buf)
 
 	if state.active and not is_split then
@@ -373,7 +378,6 @@ function M.sync_state(buf)
 		state.buf = nil
 		state.original_content = nil
 
-		-- Restore buffer name
 		restore_buffer_name(buf)
 
 		local tags = require('caption-editor.tags')
