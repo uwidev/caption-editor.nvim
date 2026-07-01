@@ -7,6 +7,7 @@ local state = {
 	active = false,
 	buf = nil,
 	original_content = nil,
+	saving = false,
 }
 
 -- Generic split function
@@ -459,16 +460,25 @@ function M.on_buffer_write()
 		return
 	end
 
+	state.saving = true
+
 	local opts = config.get()
 	local content = get_buffer_content(current_buf)
 
 	if content:find("\n") then
+		local view = vim.fn.winsaveview()
+
 		unsplit_buffer(current_buf)
-		vim.defer_fn(function()
+
+		vim.schedule(function()
 			if state.active and state.buf == current_buf and opts.auto_split then
 				split_buffer(current_buf)
+				vim.fn.winrestview(view)
 			end
-		end, 50)
+			state.saving = false
+		end)
+	else
+		state.saving = false
 	end
 end
 

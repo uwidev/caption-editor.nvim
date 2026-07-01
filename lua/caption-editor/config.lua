@@ -21,7 +21,7 @@ local defaults = {
 		show_suggestions = true,
 		debounce_ms = 200,
 		search_program = "rg",
-		force_spellcheck = nil,
+		force_spellcheck = nil,  -- nil = respect user, true = force on, false = force off
 	},
 }
 

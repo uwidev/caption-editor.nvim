@@ -1,4 +1,4 @@
--- tags.lua -
+-- tags.lua
 
 local M = {}
 local ns = vim.api.nvim_create_namespace("caption-tags")
@@ -9,36 +9,37 @@ local config = require("caption-editor.config")
 local valid_tags = {}
 local tag_file_path = ""
 local suggestion_cache = {}
+local diagnostic_cache = {}
 local validate_timer = nil
 local spell_ns = vim.api.nvim_create_namespace("caption-spell")
 
--- Build search command
+-- Build search command based on program
 local function build_search_command(query, limit, program, tag_file)
 	local limit_arg = limit and limit > 0 and ("-m " .. limit) or ""
 	local escaped_query = query:gsub('"', '\\"')
 
-	local commands = {
-		rg = string.format('rg -i -N %s "%s" "%s" 2>/dev/null', limit_arg, escaped_query, tag_file),
-		ag = string.format('ag -i --nocolor --nogroup %s "%s" "%s" 2>/dev/null', limit_arg, escaped_query, tag_file),
-		ack = string.format(
+	if program == "rg" or program == "ripgrep" then
+		return string.format('rg -i -N %s "%s" "%s" 2>/dev/null', limit_arg, escaped_query, tag_file)
+	elseif program == "ag" then
+		return string.format('ag -i --nocolor --nogroup %s "%s" "%s" 2>/dev/null', limit_arg, escaped_query, tag_file)
+	elseif program == "ack" then
+		return string.format(
 			'ack -i --no-color --no-group %s "%s" "%s" 2>/dev/null',
 			limit_arg,
 			escaped_query,
 			tag_file
-		),
-		["git grep"] = string.format(
+		)
+	elseif program == "git" or program == "git grep" then
+		return string.format(
 			'git -C "%s" grep -i -n %s "%s" 2>/dev/null',
 			vim.fn.fnamemodify(tag_file, ":h"),
 			limit_arg,
 			escaped_query
-		),
-	}
-
-	if commands[program] then
-		return commands[program]
+		)
+	else
+		-- Default to grep
+		return string.format('grep -i -n %s "%s" "%s" 2>/dev/null', limit_arg, escaped_query, tag_file)
 	end
-
-	return string.format('grep -i -n %s "%s" "%s" 2>/dev/null', limit_arg, escaped_query, tag_file)
 end
 
 -- Load tags from file
@@ -68,7 +69,10 @@ end
 
 -- Check if tag is valid
 function M.is_valid_tag(tag)
-	return tag and tag ~= "" and valid_tags[tag] or false
+	if not tag or tag == "" then
+		return false
+	end
+	return valid_tags[tag] or false
 end
 
 -- Check if a line is in a tags section
@@ -99,12 +103,7 @@ end
 
 -- Get suggestions from search program
 function M.get_suggestions(query, limit)
-	if not query or query == "" or not tag_file_path or tag_file_path == "" then
-		return {}
-	end
-
-	-- Safety: ensure tag file actually exists
-	if vim.fn.filereadable(tag_file_path) == 0 then
+	if not query or query == "" or tag_file_path == "" then
 		return {}
 	end
 
@@ -125,7 +124,8 @@ function M.get_suggestions(query, limit)
 	for line in handle:lines() do
 		local tag = line:match("^%s*(.-)%s*$")
 		if tag and tag ~= "" then
-			tag = tag:gsub("^%d+:", ""):match("^%s*(.-)%s*$")
+			tag = tag:gsub("^%d+:", "")
+			tag = tag:match("^%s*(.-)%s*$")
 			if tag and tag ~= "" then
 				table.insert(results, tag)
 			end
@@ -149,13 +149,17 @@ local function get_words(line)
 	return words
 end
 
--- Get diagnostic message for a tag
-local function get_tag_message(tag)
+-- Get diagnostic message
+local function get_diagnostic_message(tag)
 	local opts = config.get()
 	local show_suggestions = opts.tag_validation and opts.tag_validation.show_suggestions
 
 	if not show_suggestions then
 		return "Not a booru tag: " .. tag
+	end
+
+	if diagnostic_cache[tag] then
+		return diagnostic_cache[tag]
 	end
 
 	local all = M.get_suggestions(tag)
@@ -170,15 +174,17 @@ local function get_tag_message(tag)
 		msg = msg .. " (suggestions: " .. table.concat(display, ", ") .. suffix .. ")"
 	end
 
+	diagnostic_cache[tag] = msg
 	return msg
 end
 
--- Clear cache
+-- Clear caches
 function M.clear_cache()
 	suggestion_cache = {}
+	diagnostic_cache = {}
 end
 
--- Schedule validation with debounce
+-- Schedule validation with configurable debounce
 function M.schedule_validate(buf)
 	if validate_timer then
 		validate_timer:stop()
@@ -201,19 +207,15 @@ function M.validate_buffer(buf)
 		buf = vim.api.nvim_get_current_buf()
 	end
 
-	-- Safety: ensure it's a real .txt file
-	local buftype = vim.api.nvim_get_option_value("buftype", { buf = buf })
-	local filepath = vim.api.nvim_buf_get_name(buf)
-	local ext = vim.fn.fnamemodify(filepath, ":e"):lower()
-
-	if buftype ~= "" or filepath == "" or ext ~= "txt" or vim.fn.filereadable(filepath) == 0 then
+	-- Skip validation during saving
+	if editor.get_state().saving then
 		return
 	end
 
 	vim.diagnostic.reset(ns, buf)
 	vim.diagnostic.reset(spell_ns, buf)
 
-	if not editor.get_state().active or not next(valid_tags) then
+	if not editor.get_state().active or vim.tbl_count(valid_tags) == 0 then
 		return
 	end
 
@@ -258,12 +260,12 @@ function M.validate_buffer(buf)
 						col = col - 1,
 						end_col = col + #trimmed - 1,
 						severity = vim.diagnostic.severity.WARN,
-						message = get_tag_message(trimmed),
+						message = get_diagnostic_message(trimmed),
 						source = "caption-editor",
 					})
 				end
 			else
-				-- NL section: always use spellcheck if enabled
+				-- NL section: use spellcheck if enabled
 				if spell_enabled then
 					for _, word_info in ipairs(get_words(line)) do
 						local word = word_info.word
@@ -316,13 +318,13 @@ function M.get_tag_under_cursor()
 	return tag, start, end_pos
 end
 
--- Quick fix for tag
+-- Quick fix
 function M.fix_tag()
 	local buf = vim.api.nvim_get_current_buf()
 	local cursor = vim.api.nvim_win_get_cursor(0)
 
 	if not M.is_in_tags_section(buf, cursor[1] - 1) then
-		vim.notify("Not in a tags section (spellcheck uses z=)", vim.log.levels.WARN)
+		vim.notify("Not in a tags section", vim.log.levels.WARN)
 		return
 	end
 
