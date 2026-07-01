@@ -9,7 +9,7 @@ local config = require("caption-editor.config")
 local valid_tags = {}
 local tag_file_path = ""
 local tags_loaded = false
-local suggestion_cache = {}
+local suggestion_cache = {}  -- key -> { results = [...], timestamp = number }
 local diagnostic_cache = {}
 local validate_timer = nil
 local spell_ns = vim.api.nvim_create_namespace("caption-spell")
@@ -18,7 +18,7 @@ local quickfix_open = false
 -- Store the tag file path for lazy loading
 function M.set_tag_file(filepath)
 	tag_file_path = filepath
-	tags_loaded = false  -- will load on first use
+	tags_loaded = false
 end
 
 -- Ensure tags are loaded
@@ -32,6 +32,27 @@ local function ensure_tags_loaded()
 	end
 	M.load_tags(tag_file_path)
 	tags_loaded = true
+end
+
+-- Prune suggestion cache to stay within limit
+local function prune_suggestion_cache()
+	local opts = config.get()
+	local limit = opts.tag_validation.suggestion_cache_limit or 100
+	local keys = {}
+	for key, _ in pairs(suggestion_cache) do
+		table.insert(keys, key)
+	end
+	-- If we're over limit, remove oldest entries
+	if #keys > limit then
+		-- Sort by timestamp (oldest first)
+		table.sort(keys, function(a, b)
+			return suggestion_cache[a].timestamp < suggestion_cache[b].timestamp
+		end)
+		-- Remove extras
+		for i = limit + 1, #keys do
+			suggestion_cache[keys[i]] = nil
+		end
+	end
 end
 
 -- Build search command based on program
@@ -169,6 +190,10 @@ function M.load_tags(filepath)
 		end
 	end
 
+	-- Clear suggestion cache on reload
+	suggestion_cache = {}
+	diagnostic_cache = {}
+
 	vim.notify("caption-editor: Loaded " .. vim.tbl_count(valid_tags) .. " tags", vim.log.levels.INFO)
 end
 
@@ -207,19 +232,29 @@ function M.is_in_tags_section(buf, line_num)
 	return section_type == "tags"
 end
 
--- Get suggestions from search program (with algorithm selection)
+-- Get suggestions from search program (with algorithm selection and caching)
 function M.get_suggestions(query, limit)
 	ensure_tags_loaded()
 	if not query or query == "" or tag_file_path == "" then
 		return {}
 	end
 
-	if suggestion_cache[query] then
-		return suggestion_cache[query]
+	-- Check cache
+	local opts = config.get()
+	local ttl = opts.tag_validation.suggestion_cache_ttl or 300
+	local now = os.time()
+	local cache_entry = suggestion_cache[query]
+	if cache_entry then
+		-- If entry is still fresh (TTL not expired)
+		if now - cache_entry.timestamp < ttl then
+			return cache_entry.results
+		else
+			-- Expired, remove it
+			suggestion_cache[query] = nil
+		end
 	end
 
 	limit = limit or 10
-	local opts = config.get()
 	local program = opts.tag_validation.search_tool or "rg"
 	local algorithm = opts.tag_validation.rank_method or "raw"
 	local max_candidates = opts.tag_validation.max_candidates or 200
@@ -314,7 +349,13 @@ function M.get_suggestions(query, limit)
 		end
 	end
 
-	suggestion_cache[query] = results
+	-- Store in cache with timestamp
+	suggestion_cache[query] = {
+		results = results,
+		timestamp = now,
+	}
+	prune_suggestion_cache()
+
 	return results
 end
 

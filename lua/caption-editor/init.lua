@@ -15,7 +15,7 @@ function M.setup(opts)
 	if opts_config.tag_validation and opts_config.tag_validation.enabled then
 		local tag_file = opts_config.tag_validation.tag_file
 		if tag_file and tag_file ~= "" then
-			tags.set_tag_file(tag_file)   -- just store the path, load later
+			tags.set_tag_file(tag_file) -- just store the path, load later
 		end
 	end
 
@@ -25,6 +25,10 @@ function M.setup(opts)
 		tags.refresh_all()
 	end, {})
 	vim.api.nvim_create_user_command("CaptionFixTag", tags.fix_tag, {})
+	vim.api.nvim_create_user_command("CaptionEditorClearCache", function()
+		tags.clear_cache()
+		vim.notify("caption-editor: Suggestion cache cleared", vim.log.levels.INFO)
+	end, {})
 
 	-- Create keymaps
 	local keymaps = opts_config.keymaps or {}

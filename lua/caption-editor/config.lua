@@ -20,10 +20,12 @@ local defaults = {
 		auto_validate = true,
 		show_suggestions = true,
 		debounce_ms = 200,
-		search_tool = "rg",            -- Tool to fetch candidates: rg, grep, ag, ack, git grep
-		force_spellcheck = nil,  -- nil = respect user, true = force on, false = force off
-		rank_method = "hybrid",  -- Ranking: raw, levenshtein, token, hybrid
-		max_candidates = 200,  -- candidate pool size for ranking
+		search_tool = "rg", -- Tool to fetch candidates: rg, grep, ag, ack, git grep
+		force_spellcheck = nil, -- nil = respect user, true = force on, false = force off
+		rank_method = "hybrid", -- Ranking: raw, levenshtein, token, hybrid
+		max_candidates = 200, -- candidate pool size for ranking
+		suggestion_cache_ttl = 300, --seconds
+		suggestions_cache_limit = 100, -- max number of queries to cache
 	},
 }
 
@@ -92,38 +94,87 @@ local function validate_config(opts)
 		end
 
 		if valid.tag_validation.auto_validate ~= nil and type(valid.tag_validation.auto_validate) ~= "boolean" then
-			vim.notify("caption-editor: tag_validation.auto_validate must be a boolean, using default", vim.log.levels.WARN)
+			vim.notify(
+				"caption-editor: tag_validation.auto_validate must be a boolean, using default",
+				vim.log.levels.WARN
+			)
 			valid.tag_validation.auto_validate = defaults.tag_validation.auto_validate
 		end
 
-		if valid.tag_validation.show_suggestions ~= nil and type(valid.tag_validation.show_suggestions) ~= "boolean" then
-			vim.notify("caption-editor: tag_validation.show_suggestions must be a boolean, using default", vim.log.levels.WARN)
+		if
+			valid.tag_validation.show_suggestions ~= nil
+			and type(valid.tag_validation.show_suggestions) ~= "boolean"
+		then
+			vim.notify(
+				"caption-editor: tag_validation.show_suggestions must be a boolean, using default",
+				vim.log.levels.WARN
+			)
 			valid.tag_validation.show_suggestions = defaults.tag_validation.show_suggestions
 		end
 
 		if valid.tag_validation.debounce_ms and type(valid.tag_validation.debounce_ms) ~= "number" then
-			vim.notify("caption-editor: tag_validation.debounce_ms must be a number, using default", vim.log.levels.WARN)
+			vim.notify(
+				"caption-editor: tag_validation.debounce_ms must be a number, using default",
+				vim.log.levels.WARN
+			)
 			valid.tag_validation.debounce_ms = defaults.tag_validation.debounce_ms
 		end
 
 		if valid.tag_validation.search_tool and type(valid.tag_validation.search_tool) ~= "string" then
-			vim.notify("caption-editor: tag_validation.search_tool must be a string, using default", vim.log.levels.WARN)
+			vim.notify(
+				"caption-editor: tag_validation.search_tool must be a string, using default",
+				vim.log.levels.WARN
+			)
 			valid.tag_validation.search_tool = defaults.tag_validation.search_tool
 		end
 
-		if valid.tag_validation.force_spellcheck ~= nil and type(valid.tag_validation.force_spellcheck) ~= "boolean" then
-			vim.notify("caption-editor: tag_validation.force_spellcheck must be a boolean, using default", vim.log.levels.WARN)
+		if
+			valid.tag_validation.force_spellcheck ~= nil
+			and type(valid.tag_validation.force_spellcheck) ~= "boolean"
+		then
+			vim.notify(
+				"caption-editor: tag_validation.force_spellcheck must be a boolean, using default",
+				vim.log.levels.WARN
+			)
 			valid.tag_validation.force_spellcheck = defaults.tag_validation.force_spellcheck
 		end
 
 		if valid.tag_validation.rank_method and type(valid.tag_validation.rank_method) ~= "string" then
-			vim.notify("caption-editor: tag_validation.rank_method must be a string, using default", vim.log.levels.WARN)
+			vim.notify(
+				"caption-editor: tag_validation.rank_method must be a string, using default",
+				vim.log.levels.WARN
+			)
 			valid.tag_validation.rank_method = defaults.tag_validation.rank_method
 		end
 
 		if valid.tag_validation.max_candidates and type(valid.tag_validation.max_candidates) ~= "number" then
-			vim.notify("caption-editor: tag_validation.max_candidates must be a number, using default", vim.log.levels.WARN)
+			vim.notify(
+				"caption-editor: tag_validation.max_candidates must be a number, using default",
+				vim.log.levels.WARN
+			)
 			valid.tag_validation.max_candidates = defaults.tag_validation.max_candidates
+		end
+
+		if
+			valid.tag_validation.suggestion_cache_ttl
+			and type(valid.tag_validation.suggestion_cache_ttl) ~= "number"
+		then
+			vim.notify(
+				"caption-editor: tag_validation.suggestion_cache_ttl must be a number, using default",
+				vim.log.levels.WARN
+			)
+			valid.tag_validation.suggestion_cache_ttl = defaults.tag_validation.suggestion_cache_ttl
+		end
+
+		if
+			valid.tag_validation.suggestion_cache_limit
+			and type(valid.tag_validation.suggestion_cache_limit) ~= "number"
+		then
+			vim.notify(
+				"caption-editor: tag_validation.suggestion_cache_limit must be a number, using default",
+				vim.log.levels.WARN
+			)
+			valid.tag_validation.suggestion_cache_limit = defaults.tag_validation.suggestion_cache_limit
 		end
 	end
 
