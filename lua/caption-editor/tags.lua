@@ -488,4 +488,21 @@ function M.fix_all_tags()
 	end
 end
 
+-- Clear all diagnostics for a buffer
+function M.clear_all_diagnostics(buf)
+	if not buf then
+		buf = vim.api.nvim_get_current_buf()
+	end
+	
+	if not buf or not vim.api.nvim_buf_is_valid(buf) then
+		return
+	end
+	
+	-- Clear tag diagnostics
+	vim.diagnostic.reset(ns, buf)
+	
+	-- Clear spell diagnostics
+	vim.diagnostic.reset(spell_ns, buf)
+end
+
 return M

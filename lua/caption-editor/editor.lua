@@ -1,7 +1,7 @@
 -- editor.lua - Core editing logic
 
 local M = {}
-local config = require('caption-editor.config')
+local config = require("caption-editor.config")
 
 local state = {
 	active = false,
@@ -24,7 +24,7 @@ local function split(content, delimiter, keep_empty)
 	local start = 1
 	local delim_len = #delimiter
 
-	if content == '' then
+	if content == "" then
 		if keep_empty then
 			return { "" }
 		end
@@ -39,7 +39,7 @@ local function split(content, delimiter, keep_empty)
 				table.insert(parts, part)
 			else
 				local cleaned = part:match("^%s*(.-)%s*$")
-				if cleaned and cleaned ~= '' then
+				if cleaned and cleaned ~= "" then
 					table.insert(parts, cleaned)
 				end
 			end
@@ -50,7 +50,7 @@ local function split(content, delimiter, keep_empty)
 				table.insert(parts, part)
 			else
 				local cleaned = part:match("^%s*(.-)%s*$")
-				if cleaned and cleaned ~= '' then
+				if cleaned and cleaned ~= "" then
 					table.insert(parts, cleaned)
 				end
 			end
@@ -64,13 +64,13 @@ end
 -- Split text by sentences (., !, ?)
 -- Hardcoded to handle decimals (e.g., 6.25)
 local function split_sentences(text)
-	if not text or text == '' then
+	if not text or text == "" then
 		return {}
 	end
 
 	if not text:find("[.!?]") then
 		local cleaned = text:match("^%s*(.-)%s*$")
-		return cleaned and cleaned ~= '' and { cleaned } or {}
+		return cleaned and cleaned ~= "" and { cleaned } or {}
 	end
 
 	local sentences = {}
@@ -81,8 +81,8 @@ local function split_sentences(text)
 		local char = text:sub(i, i)
 
 		if char:match("[.!?]") then
-			local prev_char = i > 1 and text:sub(i-1, i-1) or ""
-			local next_char = i < #text and text:sub(i+1, i+1) or ""
+			local prev_char = i > 1 and text:sub(i - 1, i - 1) or ""
+			local next_char = i < #text and text:sub(i + 1, i + 1) or ""
 
 			if prev_char:match("%d") and next_char:match("%d") then
 				current = current .. char
@@ -90,7 +90,7 @@ local function split_sentences(text)
 			else
 				current = current .. char
 				local cleaned = current:match("^%s*(.-)%s*$")
-				if cleaned and cleaned ~= '' then
+				if cleaned and cleaned ~= "" then
 					table.insert(sentences, cleaned)
 				end
 				current = ""
@@ -106,16 +106,16 @@ local function split_sentences(text)
 		end
 	end
 
-	if current ~= '' then
+	if current ~= "" then
 		local cleaned = current:match("^%s*(.-)%s*$")
-		if cleaned and cleaned ~= '' then
+		if cleaned and cleaned ~= "" then
 			table.insert(sentences, cleaned)
 		end
 	end
 
-	if #sentences == 0 and text ~= '' then
+	if #sentences == 0 and text ~= "" then
 		local cleaned = text:match("^%s*(.-)%s*$")
-		return cleaned and cleaned ~= '' and { cleaned } or {}
+		return cleaned and cleaned ~= "" and { cleaned } or {}
 	end
 
 	return sentences
@@ -130,7 +130,7 @@ local function join_sentences(sentences)
 	local cleaned = {}
 	for _, s in ipairs(sentences) do
 		local stripped = s:match("^%s*(.-)%s*$")
-		if stripped and stripped ~= '' then
+		if stripped and stripped ~= "" then
 			table.insert(cleaned, stripped)
 		end
 	end
@@ -140,7 +140,7 @@ end
 
 -- Split tags by delimiter
 local function split_tags(content, delimiter)
-	if content == nil or content == '' then
+	if content == nil or content == "" then
 		return {}
 	end
 
@@ -148,7 +148,7 @@ local function split_tags(content, delimiter)
 	local tags = {}
 	for _, tag in ipairs(raw_tags) do
 		local cleaned = tag:match("^%s*(.-)%s*$")
-		if cleaned and cleaned ~= '' then
+		if cleaned and cleaned ~= "" then
 			table.insert(tags, cleaned)
 		end
 	end
@@ -164,7 +164,7 @@ local function join_tags(tags, delimiter, space_after)
 	local cleaned = {}
 	for _, tag in ipairs(tags) do
 		local stripped = tag:match("^%s*(.-)%s*$")
-		if stripped and stripped ~= '' then
+		if stripped and stripped ~= "" then
 			table.insert(cleaned, stripped)
 		end
 	end
@@ -224,46 +224,55 @@ local function set_buffer_content(buf, content, no_undo)
 		return
 	end
 
-	local was_modifiable = vim.api.nvim_get_option_value('modifiable', { buf = buf })
-	vim.api.nvim_set_option_value('modifiable', true, { buf = buf })
+	local was_modifiable = vim.api.nvim_get_option_value("modifiable", { buf = buf })
+	vim.api.nvim_set_option_value("modifiable", true, { buf = buf })
 
 	local lines = {}
 	for line in content:gmatch("[^\n]*") do
-		if line ~= '' then
+		if line ~= "" then
 			table.insert(lines, line)
 		end
 	end
 
 	if no_undo then
-		local saved_undolevels = vim.o.undolevels
-		vim.o.undolevels = -1
-
-		if #lines == 0 then
-			vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "" })
-		else
-			vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-		end
-
-		vim.o.undolevels = saved_undolevels
-	else
-		if #lines == 0 then
-			vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "" })
-		else
-			vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-		end
+		pcall(vim.cmd, "undojoin")
 	end
 
-	vim.api.nvim_set_option_value('modifiable', was_modifiable, { buf = buf })
+	if #lines == 0 then
+		vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "" })
+	else
+		vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+	end
+
+	vim.api.nvim_set_option_value("modifiable", was_modifiable, { buf = buf })
+end
+
+-- Create an undo marker that the split/unsplit can join with
+local function create_undo_marker(buf)
+	if not buf or not vim.api.nvim_buf_is_valid(buf) then
+		return
+	end
+
+	local changedtick = vim.api.nvim_buf_get_changedtick(buf)
+	if changedtick == 0 then
+		local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+		if #lines > 0 then
+			local line = lines[1] or ""
+			vim.api.nvim_buf_set_lines(buf, 0, 1, false, { line .. " " })
+			pcall(vim.cmd, "undojoin")
+			vim.api.nvim_buf_set_lines(buf, 0, 1, false, { line })
+		end
+	end
 end
 
 -- Check if caption file
 local function is_caption_file(buf)
 	local filepath = vim.api.nvim_buf_get_name(buf)
-	if filepath == '' then
+	if filepath == "" then
 		return false
 	end
-	local ext = vim.fn.fnamemodify(filepath, ':e'):lower()
-	return ext == 'txt'
+	local ext = vim.fn.fnamemodify(filepath, ":e"):lower()
+	return ext == "txt"
 end
 
 -- Check if section is empty
@@ -272,7 +281,53 @@ local function is_empty_section(section)
 		return true
 	end
 	local trimmed = section:match("^%s*(.-)%s*$")
-	return trimmed == nil or trimmed == ''
+	return trimmed == nil or trimmed == ""
+end
+
+-- Check if buffer content is in split format (multi-line)
+local function is_buffer_split(buf)
+	if not buf or not vim.api.nvim_buf_is_valid(buf) then
+		return false
+	end
+
+	local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+	if #lines == 0 then
+		return false
+	end
+
+	local content = table.concat(lines, "\n")
+	return content:find("\n") ~= nil
+end
+
+-- Sync state with buffer content
+function M.sync_state(buf)
+	if not buf then
+		buf = vim.api.nvim_get_current_buf()
+	end
+
+	if not buf or not vim.api.nvim_buf_is_valid(buf) then
+		return
+	end
+
+	if not is_caption_file(buf) then
+		return
+	end
+
+	local is_split = is_buffer_split(buf)
+
+	if state.active and not is_split then
+		state.active = false
+		state.buf = nil
+		state.original_content = nil
+
+		local tags = require("caption-editor.tags")
+		tags.clear_all_diagnostics(buf)
+		tags.close_quickfix()
+	elseif not state.active and is_split then
+		state.active = true
+		state.buf = buf
+		state.original_content = get_buffer_content(buf)
+	end
 end
 
 -- Split buffer
@@ -287,7 +342,7 @@ local function split_buffer(buf)
 		content = content:sub(1, -2)
 	end
 
-	if content == '' then
+	if content == "" then
 		return
 	end
 
@@ -345,7 +400,7 @@ local function unsplit_buffer(buf)
 		content = content:sub(1, -2)
 	end
 
-	if content == '' then
+	if content == "" then
 		return
 	end
 
@@ -379,7 +434,7 @@ local function unsplit_buffer(buf)
 		local is_empty = true
 		for _, line in ipairs(section) do
 			local trimmed = line:match("^%s*(.-)%s*$")
-			if trimmed and trimmed ~= '' then
+			if trimmed and trimmed ~= "" then
 				is_empty = false
 				break
 			end
@@ -408,24 +463,31 @@ function M.toggle()
 		return
 	end
 
+	M.sync_state(current_buf)
+
 	if state.active then
+		-- Toggle OFF
 		local opts = config.get()
+
+		create_undo_marker(state.buf)
+
 		if opts.auto_unsplit then
 			unsplit_buffer(state.buf)
 		end
 
-		-- Clear diagnostics using the existing validation function
-		local tags = require('caption-editor.tags')
-		tags.validate_buffer(state.buf)
-
-		-- Close quickfix when toggling off
+		local tags = require("caption-editor.tags")
+		tags.clear_all_diagnostics(state.buf)
 		tags.close_quickfix()
 
 		state.active = false
 		state.buf = nil
 		state.original_content = nil
 	else
+		-- Toggle ON
 		local opts = config.get()
+
+		create_undo_marker(current_buf)
+
 		state.buf = current_buf
 		state.original_content = get_buffer_content(current_buf)
 
@@ -434,6 +496,9 @@ function M.toggle()
 		end
 
 		state.active = true
+
+		local tags = require("caption-editor.tags")
+		tags.validate_buffer(current_buf)
 	end
 end
 

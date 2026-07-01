@@ -20,16 +20,17 @@ function M.setup(opts)
 			-- Validation autocmds (with buffer validation)
 			if opts_config.tag_validation and opts_config.tag_validation.enabled then
 				if opts_config.tag_validation.auto_validate ~= false then
+					-- In init.lua, the validation autocmd should already check state.active:
 					vim.api.nvim_create_autocmd({ "BufEnter", "TextChanged", "TextChangedI" }, {
 						group = group,
 						callback = function()
-							if editor.get_state().active then
+							local state = editor.get_state()
+							if state.active then
 								local buf = vim.api.nvim_get_current_buf()
 								local buftype = vim.api.nvim_get_option_value("buftype", { buf = buf })
 								local filepath = vim.api.nvim_buf_get_name(buf)
 								local ext = vim.fn.fnamemodify(filepath, ":e"):lower()
 
-								-- Only validate if it's a normal .txt file
 								if buftype == "" and filepath ~= "" and ext == "txt" then
 									tags.schedule_validate(buf)
 								end
@@ -81,6 +82,18 @@ function M.setup(opts)
 
 	-- Set up editor autocommands
 	local group = vim.api.nvim_create_augroup("CaptionEditor", { clear = true })
+
+	-- Consolidated: State sync on buffer enter AND text changes (handles undo in same buffer)
+	vim.api.nvim_create_autocmd({ "BufEnter", "TextChanged", "TextChangedI" }, {
+		group = group,
+		pattern = "*.txt",
+		callback = function()
+			local current_buf = vim.api.nvim_get_current_buf()
+			if current_buf then
+				editor.sync_state(current_buf)
+			end
+		end,
+	})
 
 	vim.api.nvim_create_autocmd("BufEnter", {
 		group = group,
