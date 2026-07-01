@@ -301,33 +301,38 @@ end
 
 -- Sync state with buffer content
 function M.sync_state(buf)
-	if not buf then
-		buf = vim.api.nvim_get_current_buf()
-	end
+    -- Don't sync state during save operations
+    if state.saving then
+        return
+    end
 
-	if not buf or not vim.api.nvim_buf_is_valid(buf) then
-		return
-	end
-
-	if not is_caption_file(buf) then
-		return
-	end
-
-	local is_split = is_buffer_split(buf)
-
-	if state.active and not is_split then
-		state.active = false
-		state.buf = nil
-		state.original_content = nil
-
-		local tags = require("caption-editor.tags")
-		tags.clear_all_diagnostics(buf)
-		tags.close_quickfix()
-	elseif not state.active and is_split then
-		state.active = true
-		state.buf = buf
-		state.original_content = get_buffer_content(buf)
-	end
+    if not buf then
+        buf = vim.api.nvim_get_current_buf()
+    end
+    
+    if not buf or not vim.api.nvim_buf_is_valid(buf) then
+        return
+    end
+    
+    if not is_caption_file(buf) then
+        return
+    end
+    
+    local is_split = is_buffer_split(buf)
+    
+    if state.active and not is_split then
+        state.active = false
+        state.buf = nil
+        state.original_content = nil
+        
+        local tags = require('caption-editor.tags')
+        tags.clear_all_diagnostics(buf)
+        tags.close_quickfix()
+    elseif not state.active and is_split then
+        state.active = true
+        state.buf = buf
+        state.original_content = get_buffer_content(buf)
+    end
 end
 
 -- Split buffer
