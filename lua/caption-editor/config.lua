@@ -21,6 +21,7 @@ local defaults = {
 		show_suggestions = true,
 		debounce_ms = 200,
 		search_program = "rg",
+		force_spellcheck = nil,
 	},
 }
 
@@ -106,6 +107,11 @@ local function validate_config(opts)
 		if valid.tag_validation.search_program and type(valid.tag_validation.search_program) ~= "string" then
 			vim.notify("caption-editor: tag_validation.search_program must be a string, using default", vim.log.levels.WARN)
 			valid.tag_validation.search_program = defaults.tag_validation.search_program
+		end
+
+		if valid.tag_validation.force_spellcheck ~= nil and type(valid.tag_validation.force_spellcheck) ~= "boolean" then
+			vim.notify("caption-editor: tag_validation.force_spellcheck must be a boolean, using default", vim.log.levels.WARN)
+			valid.tag_validation.force_spellcheck = defaults.tag_validation.force_spellcheck
 		end
 	end
 

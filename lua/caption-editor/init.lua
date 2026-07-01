@@ -17,16 +17,26 @@ function M.setup(opts)
 		if tag_file and tag_file ~= "" then
 			tags.load_tags(tag_file)
 
-			-- Setup real-time validation with debounce
-			if opts_config.tag_validation.auto_validate ~= false then
-				vim.api.nvim_create_autocmd({ "BufEnter", "TextChanged", "TextChangedI" }, {
-					pattern = "*.txt",
-					callback = function()
-						if editor.get_state().active then
-							tags.schedule_validate(vim.api.nvim_get_current_buf())
-						end
-					end,
-				})
+			-- Validation autocmds (with buffer validation)
+			if opts_config.tag_validation and opts_config.tag_validation.enabled then
+				if opts_config.tag_validation.auto_validate ~= false then
+					vim.api.nvim_create_autocmd({ "BufEnter", "TextChanged", "TextChangedI" }, {
+						group = group,
+						callback = function()
+							if editor.get_state().active then
+								local buf = vim.api.nvim_get_current_buf()
+								local buftype = vim.api.nvim_get_option_value("buftype", { buf = buf })
+								local filepath = vim.api.nvim_buf_get_name(buf)
+								local ext = vim.fn.fnamemodify(filepath, ":e"):lower()
+
+								-- Only validate if it's a normal .txt file
+								if buftype == "" and filepath ~= "" and ext == "txt" then
+									tags.schedule_validate(buf)
+								end
+							end
+						end,
+					})
+				end
 			end
 		end
 	end
@@ -62,7 +72,7 @@ function M.setup(opts)
 			desc = "Fix tag under cursor",
 		})
 
-		vim.api.nvim_set_keymap("n", "<leader>tfa", ":CaptionFixAllTags<CR>", {
+		vim.api.nvim_set_keymap("n", "<leader>ta", ":CaptionFixAllTags<CR>", {
 			silent = true,
 			noremap = true,
 			desc = "Fix all invalid tags",
