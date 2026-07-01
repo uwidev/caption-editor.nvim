@@ -46,7 +46,6 @@ function M.setup(opts)
 	vim.api.nvim_create_user_command("CaptionEditorToggle", editor.toggle, {})
 	vim.api.nvim_create_user_command("CaptionValidateTags", tags.list_invalid_tags, {})
 	vim.api.nvim_create_user_command("CaptionFixTag", tags.fix_tag, {})
-	vim.api.nvim_create_user_command("CaptionFixAllTags", tags.fix_all_tags, {})
 
 	-- Create keymaps
 	local keymaps = opts_config.keymaps or {}
@@ -71,12 +70,6 @@ function M.setup(opts)
 			silent = true,
 			noremap = true,
 			desc = "Fix tag under cursor",
-		})
-
-		vim.api.nvim_set_keymap("n", "<leader>ta", ":CaptionFixAllTags<CR>", {
-			silent = true,
-			noremap = true,
-			desc = "Fix all invalid tags",
 		})
 	end
 

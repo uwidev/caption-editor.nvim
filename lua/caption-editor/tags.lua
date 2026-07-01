@@ -513,7 +513,7 @@ function M.fix_tag()
 	local function apply_fix(choice)
 		vim.api.nvim_buf_set_text(buf, cursor[1] - 1, start, cursor[1] - 1, end_pos, { choice })
 		vim.api.nvim_win_set_cursor(0, { cursor[1], start + #choice })
-		M.schedule_validate(buf)
+		M.validate_buffer(buf)
 		vim.notify("Fixed: " .. tag .. " -> " .. choice, vim.log.levels.INFO)
 	end
 
@@ -536,11 +536,20 @@ function M.is_quickfix_open()
 	return quickfix_open
 end
 
--- List invalid tags in quickfix
+-- List invalid tags in quickfix (preserves selection index for :cnext/:cprev)
 function M.list_invalid_tags()
 	local buf = vim.api.nvim_get_current_buf()
 	local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
 	local qf_list = {}
+
+	-- Save current quickfix selection index (1-based)
+	local saved_idx = 1
+	if quickfix_open then
+		local info = vim.fn.getqflist({ idx = 0 })
+		if info and info.idx then
+			saved_idx = info.idx
+		end
+	end
 
 	if not editor.get_state().active then
 		if quickfix_open then
@@ -587,11 +596,20 @@ function M.list_invalid_tags()
 		return
 	end
 
-	vim.fn.setqflist(qf_list, "r")
+	-- Clamp saved index to valid range
+	local clamped_idx = math.min(saved_idx, #qf_list)
+
+	-- Set new list and restore selection index
+	vim.fn.setqflist({}, "r", {
+		items = qf_list,
+		idx = clamped_idx,
+	})
 
 	if not quickfix_open then
 		vim.cmd("copen")
 		quickfix_open = true
+		-- copen may reset the index, restore it again
+		vim.fn.setqflist({}, "a", { idx = clamped_idx })
 	end
 end
 
@@ -600,55 +618,6 @@ function M.close_quickfix()
 	if quickfix_open then
 		vim.cmd("cclose")
 		quickfix_open = false
-	end
-end
-
--- Fix all invalid tags
-function M.fix_all_tags()
-	local qf_list = vim.fn.getqflist()
-	local fixed = 0
-	local buf = vim.api.nvim_get_current_buf()
-
-	for _, item in ipairs(qf_list) do
-		local item_buf = item.bufnr
-		local line_num = item.lnum
-		local col = item.col
-
-		if item_buf and vim.api.nvim_buf_is_valid(item_buf) then
-			local lines = vim.api.nvim_buf_get_lines(item_buf, line_num - 1, line_num, false)
-			if #lines > 0 then
-				local line = lines[1]
-				local start = col - 1
-				local end_pos = start
-				while end_pos < #line and line:sub(end_pos + 1, end_pos + 1):match("[%a%d_%s]") do
-					end_pos = end_pos + 1
-				end
-
-				local tag = line:sub(start + 1, end_pos):match("^%s*(.-)%s*$")
-				if tag then
-					local suggestions = M.get_suggestions(tag, 1)
-					if #suggestions > 0 then
-						vim.api.nvim_buf_set_text(
-							item_buf,
-							line_num - 1,
-							start,
-							line_num - 1,
-							end_pos,
-							{ suggestions[1] }
-						)
-						fixed = fixed + 1
-					end
-				end
-			end
-		end
-	end
-
-	if fixed > 0 then
-		M.schedule_validate(buf)
-		vim.notify("Fixed " .. fixed .. " invalid tags", vim.log.levels.INFO)
-		M.list_invalid_tags()
-	else
-		vim.notify("No tags could be fixed", vim.log.levels.WARN)
 	end
 end
 
@@ -667,6 +636,15 @@ function M.clear_all_diagnostics(buf)
 
 	-- Clear spell diagnostics
 	vim.diagnostic.reset(spell_ns, buf)
+end
+
+-- Refresh both diagnostics and quickfix list
+function M.refresh_all(buf)
+	if not buf then
+		buf = vim.api.nvim_get_current_buf()
+	end
+	M.validate_buffer(buf)
+	M.list_invalid_tags()
 end
 
 return M
