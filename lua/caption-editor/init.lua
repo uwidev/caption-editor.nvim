@@ -44,7 +44,9 @@ function M.setup(opts)
 
 	-- Create user commands
 	vim.api.nvim_create_user_command("CaptionEditorToggle", editor.toggle, {})
-	vim.api.nvim_create_user_command("CaptionValidateTags", tags.list_invalid_tags, {})
+	vim.api.nvim_create_user_command("CaptionValidateTags", function()
+		tags.refresh_all()
+	end, {})
 	vim.api.nvim_create_user_command("CaptionFixTag", tags.fix_tag, {})
 
 	-- Create keymaps
@@ -97,7 +99,7 @@ function M.setup(opts)
 			if opts_config.tag_validation and opts_config.tag_validation.enabled then
 				local state = editor.get_state()
 				if state.active and tags.is_quickfix_open() then
-					tags.list_invalid_tags()
+					tags.refresh_all()
 				end
 			end
 		end,

@@ -370,9 +370,14 @@ end
 function M.validate_buffer(buf)
 	if not buf then
 		buf = vim.api.nvim_get_current_buf()
+	else
+		buf = tonumber(buf)
 	end
 
-	-- Skip validation during saving
+	if not buf or not vim.api.nvim_buf_is_valid(buf) then
+		return
+	end
+
 	if editor.get_state().saving then
 		return
 	end
@@ -483,7 +488,7 @@ function M.get_tag_under_cursor()
 	return tag, start, end_pos
 end
 
--- Quick fix
+-- Quick fix (no auto-refresh)
 function M.fix_tag()
 	local buf = vim.api.nvim_get_current_buf()
 	local cursor = vim.api.nvim_win_get_cursor(0)
@@ -513,6 +518,7 @@ function M.fix_tag()
 	local function apply_fix(choice)
 		vim.api.nvim_buf_set_text(buf, cursor[1] - 1, start, cursor[1] - 1, end_pos, { choice })
 		vim.api.nvim_win_set_cursor(0, { cursor[1], start + #choice })
+		-- Only validate (update diagnostics), but don't refresh quickfix
 		M.validate_buffer(buf)
 		vim.notify("Fixed: " .. tag .. " -> " .. choice, vim.log.levels.INFO)
 	end
@@ -537,8 +543,18 @@ function M.is_quickfix_open()
 end
 
 -- List invalid tags in quickfix (preserves selection index for :cnext/:cprev)
-function M.list_invalid_tags()
-	local buf = vim.api.nvim_get_current_buf()
+function M.list_invalid_tags(buf)
+	-- Use provided buffer or fallback to current buffer
+	if not buf then
+		buf = vim.api.nvim_get_current_buf()
+	else
+		buf = tonumber(buf)
+	end
+
+	if not buf or not vim.api.nvim_buf_is_valid(buf) then
+		return
+	end
+
 	local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
 	local qf_list = {}
 
@@ -638,13 +654,20 @@ function M.clear_all_diagnostics(buf)
 	vim.diagnostic.reset(spell_ns, buf)
 end
 
--- Refresh both diagnostics and quickfix list
+-- Refresh both diagnostics and quickfix list (manual refresh)
 function M.refresh_all(buf)
 	if not buf then
 		buf = vim.api.nvim_get_current_buf()
+	else
+		buf = tonumber(buf)
 	end
+
+	if not buf or not vim.api.nvim_buf_is_valid(buf) then
+		return
+	end
+
 	M.validate_buffer(buf)
-	M.list_invalid_tags()
+	M.list_invalid_tags(buf)
 end
 
 return M
