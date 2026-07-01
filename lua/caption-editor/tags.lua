@@ -1,16 +1,68 @@
--- tags.lua - Tag validation and suggestions
+-- tags.lua - Pure rg version
 
 local M = {}
-local valid_tags = {}
 local ns = vim.api.nvim_create_namespace("caption-tags")
 local editor = require('caption-editor.editor')
 local config = require('caption-editor.config')
+
+-- State
+local valid_tags = {}
+local tag_file_path = ""
+local suggestion_cache = {}
+local diagnostic_cache = {}
+local validate_timer = nil
+
+-- Build search command based on program
+local function build_search_command(query, limit, program, tag_file)
+	local limit_arg = limit and limit > 0 and ("-m " .. limit) or ""
+	local escaped_query = query:gsub('"', '\\"')
+
+	if program == "rg" or program == "ripgrep" then
+		return string.format(
+			'rg -i -N %s "%s" "%s" 2>/dev/null',
+			limit_arg,
+			escaped_query,
+			tag_file
+		)
+	elseif program == "ag" then
+		return string.format(
+			'ag -i --nocolor --nogroup %s "%s" "%s" 2>/dev/null',
+			limit_arg,
+			escaped_query,
+			tag_file
+		)
+	elseif program == "ack" then
+		return string.format(
+			'ack -i --no-color --no-group %s "%s" "%s" 2>/dev/null',
+			limit_arg,
+			escaped_query,
+			tag_file
+		)
+	elseif program == "git" or program == "git grep" then
+		return string.format(
+			'git -C "%s" grep -i -n %s "%s" 2>/dev/null',
+			vim.fn.fnamemodify(tag_file, ":h"),
+			limit_arg,
+			escaped_query
+		)
+	else
+		-- Default to grep
+		return string.format(
+			'grep -i -n %s "%s" "%s" 2>/dev/null',
+			limit_arg,
+			escaped_query,
+			tag_file
+		)
+	end
+end
 
 -- Load tags from file
 function M.load_tags(filepath)
 	if not filepath or filepath == '' then
 		return
 	end
+
+	tag_file_path = filepath
 
 	local lines = vim.fn.readfile(filepath)
 	if not lines then
@@ -63,58 +115,96 @@ function M.is_in_tags_section(buf, line_num)
 	return section_type == "tags"
 end
 
--- Find similar tags for suggestions
-function M.suggest_tags(tag, max_suggestions)
-	max_suggestions = max_suggestions or 5
-	local suggestions = {}
-	local tag_lower = tag:lower()
+-- Get suggestions from search program
+function M.get_suggestions(query, limit)
+	if not query or query == '' or tag_file_path == '' then
+		return {}
+	end
 
-	for valid_tag, _ in pairs(valid_tags) do
-		if #suggestions >= max_suggestions then
-			break
-		end
+	if suggestion_cache[query] then
+		return suggestion_cache[query]
+	end
 
-		-- Exact match (case insensitive)
-		if valid_tag:lower() == tag_lower then
-			table.insert(suggestions, valid_tag)
-		-- Starts with (case insensitive)
-		elseif valid_tag:lower():find(tag_lower, 1, true) then
-			table.insert(suggestions, valid_tag)
-		-- Similar length and character overlap
-		elseif #valid_tag >= #tag - 2 and #valid_tag <= #tag + 2 then
-			local matches = 0
-			for i = 1, math.min(#tag, #valid_tag) do
-				if tag_lower:sub(i, i) == valid_tag:lower():sub(i, i) then
-					matches = matches + 1
-				end
-			end
-			if matches >= #tag - 2 then
-				table.insert(suggestions, valid_tag)
+	local opts = config.get()
+	local program = opts.tag_validation.search_program or "rg"
+	local cmd = build_search_command(query, limit, program, tag_file_path)
+
+	local handle = io.popen(cmd)
+	if not handle then
+		return {}
+	end
+
+	local results = {}
+	for line in handle:lines() do
+		local tag = line:match("^%s*(.-)%s*$")
+		if tag and tag ~= '' then
+			-- Strip line numbers for grep/git grep
+			tag = tag:gsub("^%d+:", "")
+			tag = tag:match("^%s*(.-)%s*$")
+			if tag and tag ~= '' then
+				table.insert(results, tag)
 			end
 		end
 	end
+	handle:close()
 
-	-- Sort suggestions by relevance
-	table.sort(suggestions, function(a, b)
-		local a_score = 0
-		local b_score = 0
-		local tag_lower = tag:lower()
-
-		if a:lower() == tag_lower then a_score = 100 end
-		if a:lower():find(tag_lower, 1, true) then a_score = 50 end
-		if #a == #tag then a_score = 10 end
-
-		if b:lower() == tag_lower then b_score = 100 end
-		if b:lower():find(tag_lower, 1, true) then b_score = 50 end
-		if #b == #tag then b_score = 10 end
-
-		return a_score > b_score
-	end)
-
-	return suggestions
+	suggestion_cache[query] = results
+	return results
 end
 
--- Validate buffer and show diagnostics
+-- Get diagnostic message
+local function get_diagnostic_message(tag)
+	local opts = config.get()
+	local show_suggestions = opts.tag_validation and opts.tag_validation.show_suggestions
+
+	if not show_suggestions then
+		return "Not a booru tag: " .. tag
+	end
+
+	if diagnostic_cache[tag] then
+		return diagnostic_cache[tag]
+	end
+
+	local all = M.get_suggestions(tag)
+	local display = {}
+	for i = 1, math.min(5, #all) do
+		table.insert(display, all[i])
+	end
+
+	local msg = "Not a booru tag: " .. tag
+	if #display > 0 then
+		local suffix = #all > 5 and (" (+" .. (#all - 5) .. " more)") or ""
+		msg = msg .. " (suggestions: " .. table.concat(display, ", ") .. suffix .. ")"
+	end
+
+	diagnostic_cache[tag] = msg
+	return msg
+end
+
+-- Clear caches
+function M.clear_cache()
+	suggestion_cache = {}
+	diagnostic_cache = {}
+end
+
+-- Schedule validation with configurable debounce
+function M.schedule_validate(buf)
+	if validate_timer then
+		validate_timer:stop()
+		validate_timer:close()
+		validate_timer = nil
+	end
+
+	local opts = config.get()
+	local debounce_ms = opts.tag_validation.debounce_ms or 200
+
+	validate_timer = vim.defer_fn(function()
+		validate_timer = nil
+		M.validate_buffer(buf)
+	end, debounce_ms)
+end
+
+-- Validate buffer
 function M.validate_buffer(buf)
 	if not buf then
 		buf = vim.api.nvim_get_current_buf()
@@ -122,7 +212,7 @@ function M.validate_buffer(buf)
 
 	vim.diagnostic.reset(ns, buf)
 
-	if not editor.get_state().active then
+	if not editor.get_state().active or vim.tbl_count(valid_tags) == 0 then
 		return
 	end
 
@@ -133,25 +223,18 @@ function M.validate_buffer(buf)
 		local trimmed = line:match("^%s*(.-)%s*$")
 
 		if trimmed and trimmed ~= '' and trimmed ~= "|||" then
-			if M.is_in_tags_section(buf, line_num - 1) then
-				if not M.is_valid_tag(trimmed) then
-					local col = line:find(trimmed) or 1
-					local suggestions = M.suggest_tags(trimmed, 3)
-					local msg = "Invalid tag: " .. trimmed
-					if #suggestions > 0 then
-						msg = msg .. " (suggestions: " .. table.concat(suggestions, ", ") .. ")"
-					end
+			if M.is_in_tags_section(buf, line_num - 1) and not M.is_valid_tag(trimmed) then
+				local col = line:find(trimmed) or 1
 
-					table.insert(diagnostics, {
-						bufnr = buf,
-						lnum = line_num - 1,
-						col = col - 1,
-						end_col = col + #trimmed - 1,
-						severity = vim.diagnostic.severity.WARN,
-						message = msg,
-						source = "caption-editor",
-					})
-				end
+				table.insert(diagnostics, {
+					bufnr = buf,
+					lnum = line_num - 1,
+					col = col - 1,
+					end_col = col + #trimmed - 1,
+					severity = vim.diagnostic.severity.WARN,
+					message = get_diagnostic_message(trimmed),
+					source = "caption-editor",
+				})
 			end
 		end
 	end
@@ -161,13 +244,11 @@ function M.validate_buffer(buf)
 	end
 end
 
--- Get the tag under cursor
+-- Get tag under cursor
 function M.get_tag_under_cursor()
 	local line = vim.api.nvim_get_current_line()
-	local cursor = vim.api.nvim_win_get_cursor(0)
-	local col = cursor[2]
+	local col = vim.api.nvim_win_get_cursor(0)[2]
 
-	-- Find start of word
 	local start = col
 	while start > 0 and line:sub(start, start):match("[%a%d_%s]") do
 		start = start - 1
@@ -176,7 +257,6 @@ function M.get_tag_under_cursor()
 		start = start + 1
 	end
 
-	-- Find end of word
 	local end_pos = col
 	while end_pos < #line and line:sub(end_pos + 1, end_pos + 1):match("[%a%d_%s]") do
 		end_pos = end_pos + 1
@@ -186,36 +266,17 @@ function M.get_tag_under_cursor()
 	return tag, start, end_pos
 end
 
--- Quick fix: Replace invalid tag with suggestion
+-- Quick fix
 function M.fix_tag()
 	local buf = vim.api.nvim_get_current_buf()
 	local cursor = vim.api.nvim_win_get_cursor(0)
-	local line = vim.api.nvim_get_current_line()
-	local col = cursor[2]
 
-	-- Only fix if in a tags section
 	if not M.is_in_tags_section(buf, cursor[1] - 1) then
 		vim.notify("Not in a tags section", vim.log.levels.WARN)
 		return
 	end
 
-	-- Find start of word (0-indexed for nvim_buf_set_text)
-	local start = col
-	while start > 0 and line:sub(start, start):match("[%a%d_%s]") do
-		start = start - 1
-	end
-	-- If we stopped at a space or comma, move past it
-	if start > 0 and (line:sub(start, start) == " " or line:sub(start, start) == ",") then
-		start = start + 1
-	end
-
-	-- Find end of word
-	local end_pos = col
-	while end_pos < #line and line:sub(end_pos + 1, end_pos + 1):match("[%a%d_%s]") do
-		end_pos = end_pos + 1
-	end
-
-	local tag = line:sub(start + 1, end_pos):match("^%s*(.-)%s*$")
+	local tag, start, end_pos = M.get_tag_under_cursor()
 	if not tag or tag == '' then
 		vim.notify("No tag under cursor", vim.log.levels.WARN)
 		return
@@ -226,21 +287,16 @@ function M.fix_tag()
 		return
 	end
 
-	local suggestions = M.suggest_tags(tag, 5)
+	local suggestions = M.get_suggestions(tag)
 	if #suggestions == 0 then
 		vim.notify("No suggestions found for: " .. tag, vim.log.levels.WARN)
 		return
 	end
 
-	-- Apply fix using nvim_buf_set_text
 	local function apply_fix(choice)
-		-- nvim_buf_set_text uses 0-indexed line, 0-indexed column
-		-- start and end_pos are 0-indexed in this function
 		vim.api.nvim_buf_set_text(buf, cursor[1] - 1, start, cursor[1] - 1, end_pos, { choice })
 		vim.api.nvim_win_set_cursor(0, { cursor[1], start + #choice })
-		vim.defer_fn(function()
-			M.validate_buffer(buf)
-		end, 100)
+		M.schedule_validate(buf)
 		vim.notify("Fixed: " .. tag .. " -> " .. choice, vim.log.levels.INFO)
 	end
 
@@ -250,10 +306,7 @@ function M.fix_tag()
 	end
 
 	vim.ui.select(suggestions, {
-		prompt = "Replace '" .. tag .. "' with:",
-		format_item = function(item)
-			return item
-		end,
+		prompt = "Replace '" .. tag .. "' with (" .. #suggestions .. " matches):",
 	}, function(choice)
 		if choice then
 			apply_fix(choice)
@@ -261,8 +314,7 @@ function M.fix_tag()
 	end)
 end
 
--- List all invalid tags in buffer
--- List all invalid tags in buffer and populate quickfix
+-- List invalid tags in quickfix
 function M.list_invalid_tags()
 	local buf = vim.api.nvim_get_current_buf()
 	local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
@@ -271,24 +323,27 @@ function M.list_invalid_tags()
 	for line_num, line in ipairs(lines) do
 		local trimmed = line:match("^%s*(.-)%s*$")
 		if trimmed and trimmed ~= '' and trimmed ~= "|||" then
-			if M.is_in_tags_section(buf, line_num - 1) then
-				if not M.is_valid_tag(trimmed) then
-					local col = line:find(trimmed) or 1
-					local suggestions = M.suggest_tags(trimmed, 3)
-
-					local text = "Invalid tag: " .. trimmed
-					if #suggestions > 0 then
-						text = text .. " (suggestions: " .. table.concat(suggestions, ", ") .. ")"
-					end
-
-					table.insert(qf_list, {
-						bufnr = buf,
-						lnum = line_num,
-						col = col,
-						text = text,
-						type = "W",
-					})
+			if M.is_in_tags_section(buf, line_num - 1) and not M.is_valid_tag(trimmed) then
+				local col = line:find(trimmed) or 1
+				local all = M.get_suggestions(trimmed)
+				local display = {}
+				for i = 1, math.min(3, #all) do
+					table.insert(display, all[i])
 				end
+
+				local text = "Not a booru tag: " .. trimmed
+				if #display > 0 then
+					local suffix = #all > 3 and (" (+" .. (#all - 3) .. " more)") or ""
+					text = text .. " (suggestions: " .. table.concat(display, ", ") .. suffix .. ")"
+				end
+
+				table.insert(qf_list, {
+					bufnr = buf,
+					lnum = line_num,
+					col = col,
+					text = text,
+					type = "W",
+				})
 			end
 		end
 	end
@@ -298,29 +353,27 @@ function M.list_invalid_tags()
 		return
 	end
 
-	-- Set quickfix list
 	vim.fn.setqflist(qf_list, 'r')
-	vim.cmd('copen')  -- Open quickfix window
-
+	vim.cmd('copen')
 	vim.notify("Found " .. #qf_list .. " invalid tags in quickfix list", vim.log.levels.WARN)
 end
 
--- Fix all invalid tags in quickfix list
+-- Fix all invalid tags
 function M.fix_all_tags()
 	local qf_list = vim.fn.getqflist()
 	local fixed = 0
+	local buf = vim.api.nvim_get_current_buf()
 
 	for _, item in ipairs(qf_list) do
-		local buf = item.bufnr
+		local item_buf = item.bufnr
 		local line_num = item.lnum
 		local col = item.col
 
-		if buf and vim.api.nvim_buf_is_valid(buf) then
-			local lines = vim.api.nvim_buf_get_lines(buf, line_num - 1, line_num, false)
+		if item_buf and vim.api.nvim_buf_is_valid(item_buf) then
+			local lines = vim.api.nvim_buf_get_lines(item_buf, line_num - 1, line_num, false)
 			if #lines > 0 then
 				local line = lines[1]
-				-- Find the tag at the reported position
-				local start = col - 1  -- 0-indexed
+				local start = col - 1
 				local end_pos = start
 				while end_pos < #line and line:sub(end_pos + 1, end_pos + 1):match("[%a%d_%s]") do
 					end_pos = end_pos + 1
@@ -328,10 +381,9 @@ function M.fix_all_tags()
 
 				local tag = line:sub(start + 1, end_pos):match("^%s*(.-)%s*$")
 				if tag then
-					local suggestions = M.suggest_tags(tag, 1)
+					local suggestions = M.get_suggestions(tag, 1)
 					if #suggestions > 0 then
-						-- Fix the tag
-						vim.api.nvim_buf_set_text(buf, line_num - 1, start, line_num - 1, end_pos, { suggestions[1] })
+						vim.api.nvim_buf_set_text(item_buf, line_num - 1, start, line_num - 1, end_pos, { suggestions[1] })
 						fixed = fixed + 1
 					end
 				end
@@ -339,11 +391,9 @@ function M.fix_all_tags()
 		end
 	end
 
-	-- Re-validate the buffer
 	if fixed > 0 then
-		M.validate_buffer(buf)
+		M.schedule_validate(buf)
 		vim.notify("Fixed " .. fixed .. " invalid tags", vim.log.levels.INFO)
-		-- Refresh quickfix list
 		M.list_invalid_tags()
 	else
 		vim.notify("No tags could be fixed", vim.log.levels.WARN)

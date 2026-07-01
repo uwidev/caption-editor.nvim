@@ -17,15 +17,13 @@ function M.setup(opts)
 		if tag_file and tag_file ~= "" then
 			tags.load_tags(tag_file)
 
-			-- Setup real-time validation
+			-- Setup real-time validation with debounce
 			if opts_config.tag_validation.auto_validate ~= false then
 				vim.api.nvim_create_autocmd({ "BufEnter", "TextChanged", "TextChangedI" }, {
 					pattern = "*.txt",
 					callback = function()
 						if editor.get_state().active then
-							vim.defer_fn(function()
-								tags.validate_buffer()
-							end, 500)
+							tags.schedule_validate(vim.api.nvim_get_current_buf())
 						end
 					end,
 				})
@@ -50,21 +48,7 @@ function M.setup(opts)
 		})
 	end
 
-	-- Validation keymaps
-	if opts_config.tag_validation and opts_config.tag_validation.enabled then
-		vim.api.nvim_set_keymap("n", "<leader>tv", ":CaptionValidateTags<CR>", {
-			silent = true,
-			noremap = true,
-			desc = "Validate tags",
-		})
-
-		vim.api.nvim_set_keymap("n", "<leader>tf", ":CaptionFixTag<CR>", {
-			silent = true,
-			noremap = true,
-			desc = "Fix tag under cursor",
-		})
-	end
-
+	-- Validation keymaps (only if enabled)
 	if opts_config.tag_validation and opts_config.tag_validation.enabled then
 		vim.api.nvim_set_keymap("n", "<leader>tv", ":CaptionValidateTags<CR>", {
 			silent = true,

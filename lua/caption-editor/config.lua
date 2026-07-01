@@ -18,6 +18,9 @@ local defaults = {
 		enabled = false,
 		tag_file = "",
 		auto_validate = true,
+		show_suggestions = true,
+		debounce_ms = 200,
+		search_program = "rg",
 	},
 }
 
@@ -88,6 +91,21 @@ local function validate_config(opts)
 		if valid.tag_validation.auto_validate ~= nil and type(valid.tag_validation.auto_validate) ~= "boolean" then
 			vim.notify("caption-editor: tag_validation.auto_validate must be a boolean, using default", vim.log.levels.WARN)
 			valid.tag_validation.auto_validate = defaults.tag_validation.auto_validate
+		end
+
+		if valid.tag_validation.show_suggestions ~= nil and type(valid.tag_validation.show_suggestions) ~= "boolean" then
+			vim.notify("caption-editor: tag_validation.show_suggestions must be a boolean, using default", vim.log.levels.WARN)
+			valid.tag_validation.show_suggestions = defaults.tag_validation.show_suggestions
+		end
+
+		if valid.tag_validation.debounce_ms and type(valid.tag_validation.debounce_ms) ~= "number" then
+			vim.notify("caption-editor: tag_validation.debounce_ms must be a number, using default", vim.log.levels.WARN)
+			valid.tag_validation.debounce_ms = defaults.tag_validation.debounce_ms
+		end
+
+		if valid.tag_validation.search_program and type(valid.tag_validation.search_program) ~= "string" then
+			vim.notify("caption-editor: tag_validation.search_program must be a string, using default", vim.log.levels.WARN)
+			valid.tag_validation.search_program = defaults.tag_validation.search_program
 		end
 	end
 
