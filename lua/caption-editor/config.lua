@@ -20,8 +20,10 @@ local defaults = {
 		auto_validate = true,
 		show_suggestions = true,
 		debounce_ms = 200,
-		search_program = "rg",
+		search_tool = "rg",            -- Tool to fetch candidates: rg, grep, ag, ack, git grep
 		force_spellcheck = nil,  -- nil = respect user, true = force on, false = force off
+		rank_method = "hybrid",  -- Ranking: raw, levenshtein, token, hybrid
+		max_candidates = 200,  -- candidate pool size for ranking
 	},
 }
 
@@ -104,14 +106,24 @@ local function validate_config(opts)
 			valid.tag_validation.debounce_ms = defaults.tag_validation.debounce_ms
 		end
 
-		if valid.tag_validation.search_program and type(valid.tag_validation.search_program) ~= "string" then
-			vim.notify("caption-editor: tag_validation.search_program must be a string, using default", vim.log.levels.WARN)
-			valid.tag_validation.search_program = defaults.tag_validation.search_program
+		if valid.tag_validation.search_tool and type(valid.tag_validation.search_tool) ~= "string" then
+			vim.notify("caption-editor: tag_validation.search_tool must be a string, using default", vim.log.levels.WARN)
+			valid.tag_validation.search_tool = defaults.tag_validation.search_tool
 		end
 
 		if valid.tag_validation.force_spellcheck ~= nil and type(valid.tag_validation.force_spellcheck) ~= "boolean" then
 			vim.notify("caption-editor: tag_validation.force_spellcheck must be a boolean, using default", vim.log.levels.WARN)
 			valid.tag_validation.force_spellcheck = defaults.tag_validation.force_spellcheck
+		end
+
+		if valid.tag_validation.rank_method and type(valid.tag_validation.rank_method) ~= "string" then
+			vim.notify("caption-editor: tag_validation.rank_method must be a string, using default", vim.log.levels.WARN)
+			valid.tag_validation.rank_method = defaults.tag_validation.rank_method
+		end
+
+		if valid.tag_validation.max_candidates and type(valid.tag_validation.max_candidates) ~= "number" then
+			vim.notify("caption-editor: tag_validation.max_candidates must be a number, using default", vim.log.levels.WARN)
+			valid.tag_validation.max_candidates = defaults.tag_validation.max_candidates
 		end
 	end
 

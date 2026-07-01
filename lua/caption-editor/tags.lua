@@ -38,9 +38,93 @@ local function build_search_command(query, limit, program, tag_file)
 			escaped_query
 		)
 	else
-		-- Default to grep
 		return string.format('grep -i -n %s "%s" "%s" 2>/dev/null', limit_arg, escaped_query, tag_file)
 	end
+end
+
+-- Levenshtein distance (Lua implementation)
+local function levenshtein_lua(a, b)
+	if a == b then
+		return 0
+	end
+	local len_a, len_b = #a, #b
+	if len_a == 0 then
+		return len_b
+	end
+	if len_b == 0 then
+		return len_a
+	end
+	local matrix = {}
+	for i = 0, len_a do
+		matrix[i] = { [0] = i }
+	end
+	for j = 0, len_b do
+		matrix[0][j] = j
+	end
+	for i = 1, len_a do
+		for j = 1, len_b do
+			local cost = a:sub(i, i) == b:sub(j, j) and 0 or 1
+			matrix[i][j] = math.min(matrix[i - 1][j] + 1, matrix[i][j - 1] + 1, matrix[i - 1][j - 1] + cost)
+		end
+	end
+	return matrix[len_a][len_b]
+end
+
+-- Use vim's built-in levenshtein if available
+local function levenshtein_distance(a, b)
+	if vim.fn.has("levenshtein") == 1 then
+		return vim.fn.levenshtein(a, b)
+	end
+	return levenshtein_lua(a, b)
+end
+
+-- Token similarity: split by underscores and compare overlap
+local function token_similarity_score(query, tag)
+	if not query or query == "" or not tag or tag == "" then
+		return 0
+	end
+
+	local function split_tokens(str)
+		local tokens = {}
+		for token in str:gmatch("[^_]+") do
+			if token ~= "" then
+				table.insert(tokens, token:lower())
+			end
+		end
+		return tokens
+	end
+
+	local query_tokens = split_tokens(query)
+	local tag_tokens = split_tokens(tag)
+
+	if #query_tokens == 0 or #tag_tokens == 0 then
+		return 0
+	end
+
+	local query_set = {}
+	for _, t in ipairs(query_tokens) do
+		query_set[t] = true
+	end
+
+	local matches = 0
+	for _, t in ipairs(tag_tokens) do
+		if query_set[t] then
+			matches = matches + 1
+		end
+	end
+
+	local max_tokens = math.max(#query_tokens, #tag_tokens)
+	local score = (matches / max_tokens) * 100
+
+	if #query_tokens == #tag_tokens and matches == #query_tokens then
+		score = 100
+	end
+
+	if tag:lower():find(query:lower(), 1, true) == 1 then
+		score = score + 10
+	end
+
+	return score
 end
 
 -- Load tags from file
@@ -102,7 +186,7 @@ function M.is_in_tags_section(buf, line_num)
 	return section_type == "tags"
 end
 
--- Get suggestions from search program
+-- Get suggestions from search program (with algorithm selection)
 function M.get_suggestions(query, limit)
 	if not query or query == "" or tag_file_path == "" then
 		return {}
@@ -112,27 +196,107 @@ function M.get_suggestions(query, limit)
 		return suggestion_cache[query]
 	end
 
+	-- Get suggestions from search tool (with ranking selection)
+	limit = limit or 10
 	local opts = config.get()
-	local program = opts.tag_validation.search_program or "rg"
-	local cmd = build_search_command(query, limit, program, tag_file_path)
-
-	local handle = io.popen(cmd)
-	if not handle then
-		return {}
-	end
+	local program = opts.tag_validation.search_tool or "rg"
+	local algorithm = opts.tag_validation.rank_method or "raw" -- raw, no ranking, just raw output from search_tool
+	local max_candidates = opts.tag_validation.max_candidates or 200
 
 	local results = {}
-	for line in handle:lines() do
-		local tag = line:match("^%s*(.-)%s*$")
-		if tag and tag ~= "" then
-			tag = tag:gsub("^%d+:", "")
-			tag = tag:match("^%s*(.-)%s*$")
-			if tag and tag ~= "" then
-				table.insert(results, tag)
+
+	if algorithm == "levenshtein" or algorithm == "token" or algorithm == "hybrid" then
+		local cmd = build_search_command(query, max_candidates, program, tag_file_path)
+		local handle = io.popen(cmd)
+		if handle then
+			local candidates = {}
+			for line in handle:lines() do
+				local tag = line:match("^%s*(.-)%s*$")
+				if tag and tag ~= "" then
+					tag = tag:gsub("^%d+:", "")
+					tag = tag:match("^%s*(.-)%s*$")
+					if tag and tag ~= "" then
+						table.insert(candidates, tag)
+					end
+				end
+			end
+			handle:close()
+
+			local scored = {}
+			for _, tag in ipairs(candidates) do
+				local lev_score = 0
+				local token_score = 0
+				local final_score = 0
+
+				if algorithm == "levenshtein" then
+					local dist = levenshtein_distance(query:lower(), tag:lower())
+					lev_score = 100 - (dist / math.max(#query, #tag) * 100)
+					if tag:lower() == query:lower() then
+						lev_score = 1000
+					end
+					if tag:lower():find(query:lower(), 1, true) == 1 then
+						lev_score = lev_score + 20
+					end
+					final_score = lev_score
+				elseif algorithm == "token" then
+					token_score = token_similarity_score(query, tag)
+					final_score = token_score
+				else -- hybrid
+					-- Levenshtein score (normalized 0-100)
+					local dist = levenshtein_distance(query:lower(), tag:lower())
+					lev_score = math.max(0, 100 - (dist / math.max(#query, #tag) * 100))
+
+					-- Token score (0-100)
+					token_score = token_similarity_score(query, tag)
+
+					-- Exact match bonus
+					local exact_bonus = 0
+					if tag:lower() == query:lower() then
+						exact_bonus = 100
+					end
+
+					-- Prefix bonus
+					local prefix_bonus = 0
+					if tag:lower():find(query:lower(), 1, true) == 1 then
+						prefix_bonus = 20
+					end
+
+					-- Combine: 40% Levenshtein + 40% Token + 20% bonuses
+					final_score = (lev_score * 0.35) + (token_score * 0.35) + exact_bonus + prefix_bonus
+				end
+
+				table.insert(scored, { tag = tag, score = final_score })
+			end
+
+			table.sort(scored, function(a, b)
+				if a.score ~= b.score then
+					return a.score > b.score
+				end
+				return #a.tag < #b.tag
+			end)
+
+			for i = 1, math.min(limit, #scored) do
+				table.insert(results, scored[i].tag)
 			end
 		end
+	else
+		-- raw (original behavior)
+		local cmd = build_search_command(query, limit, program, tag_file_path)
+		local handle = io.popen(cmd)
+		if handle then
+			for line in handle:lines() do
+				local tag = line:match("^%s*(.-)%s*$")
+				if tag and tag ~= "" then
+					tag = tag:gsub("^%d+:", "")
+					tag = tag:match("^%s*(.-)%s*$")
+					if tag and tag ~= "" then
+						table.insert(results, tag)
+					end
+				end
+			end
+			handle:close()
+		end
 	end
-	handle:close()
 
 	suggestion_cache[query] = results
 	return results
@@ -493,14 +657,14 @@ function M.clear_all_diagnostics(buf)
 	if not buf then
 		buf = vim.api.nvim_get_current_buf()
 	end
-	
+
 	if not buf or not vim.api.nvim_buf_is_valid(buf) then
 		return
 	end
-	
+
 	-- Clear tag diagnostics
 	vim.diagnostic.reset(ns, buf)
-	
+
 	-- Clear spell diagnostics
 	vim.diagnostic.reset(spell_ns, buf)
 end
