@@ -488,7 +488,7 @@ function M.get_tag_under_cursor()
 	return tag, start, end_pos
 end
 
--- Quick fix (no auto-refresh)
+-- Quick fix
 function M.fix_tag()
 	local buf = vim.api.nvim_get_current_buf()
 	local cursor = vim.api.nvim_win_get_cursor(0)
@@ -518,7 +518,7 @@ function M.fix_tag()
 	local function apply_fix(choice)
 		vim.api.nvim_buf_set_text(buf, cursor[1] - 1, start, cursor[1] - 1, end_pos, { choice })
 		vim.api.nvim_win_set_cursor(0, { cursor[1], start + #choice })
-		-- Only validate (update diagnostics), but don't refresh quickfix
+		-- Only update diagnostics, leave quickfix untouched
 		M.validate_buffer(buf)
 		vim.notify("Fixed: " .. tag .. " -> " .. choice, vim.log.levels.INFO)
 	end

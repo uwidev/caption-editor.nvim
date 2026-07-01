@@ -20,7 +20,6 @@ function M.setup(opts)
 			-- Validation autocmds (with buffer validation)
 			if opts_config.tag_validation and opts_config.tag_validation.enabled then
 				if opts_config.tag_validation.auto_validate ~= false then
-					-- In init.lua, the validation autocmd should already check state.active:
 					vim.api.nvim_create_autocmd({ "BufEnter", "TextChanged", "TextChangedI" }, {
 						group = group,
 						callback = function()
@@ -95,13 +94,6 @@ function M.setup(opts)
 		pattern = "*.txt",
 		callback = function()
 			editor.on_buffer_change()
-			-- Update quickfix when switching buffers ONLY if quickfix is already open
-			if opts_config.tag_validation and opts_config.tag_validation.enabled then
-				local state = editor.get_state()
-				if state.active and tags.is_quickfix_open() then
-					tags.refresh_all()
-				end
-			end
 		end,
 	})
 
