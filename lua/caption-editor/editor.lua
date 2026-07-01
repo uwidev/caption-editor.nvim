@@ -320,6 +320,8 @@ function M.sync_state(buf)
     
     local is_split = is_buffer_split(buf)
     
+    -- Only deactivate if the plugin is active but the buffer is no longer split.
+    -- Never auto-activate; activation should only happen via explicit toggle.
     if state.active and not is_split then
         state.active = false
         state.buf = nil
@@ -328,10 +330,6 @@ function M.sync_state(buf)
         local tags = require('caption-editor.tags')
         tags.clear_all_diagnostics(buf)
         tags.close_quickfix()
-    elseif not state.active and is_split then
-        state.active = true
-        state.buf = buf
-        state.original_content = get_buffer_content(buf)
     end
 end
 
