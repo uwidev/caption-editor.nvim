@@ -7,8 +7,7 @@ local config = require("caption-editor.config")
 
 -- State
 local valid_tags = {}
-local tag_file_path = ""
-local custom_tag_file_path = ""
+local tag_files = {}
 local tags_loaded = false
 local suggestion_cache = {} -- key -> { results = [...], timestamp = number }
 local diagnostic_cache = {}
@@ -21,14 +20,9 @@ function M.get_invalid_count()
 	return invalid_count
 end
 
--- Store tag file paths
-function M.set_tag_file(filepath)
-	tag_file_path = filepath
-	tags_loaded = false
-end
-
-function M.set_custom_tag_file(filepath)
-	custom_tag_file_path = filepath
+-- Store the list of tag files
+function M.set_tag_files(files)
+	tag_files = files or {}
 	tags_loaded = false
 end
 
@@ -52,29 +46,26 @@ local function load_single_file(filepath, file_label)
 	return tags
 end
 
--- Load tags from both files (lazy)
+-- Load tags from all files (lazy)
 function M.load_tags()
 	valid_tags = {}
 	local loaded_count = 0
 
-	if tag_file_path and tag_file_path ~= "" then
-		local main_tags = load_single_file(tag_file_path, "main")
-		for tag, _ in pairs(main_tags) do
-			valid_tags[tag] = true
-		end
-		loaded_count = loaded_count + vim.tbl_count(main_tags)
-		vim.notify("caption-editor: Loaded " .. vim.tbl_count(main_tags) .. " tags from main file", vim.log.levels.INFO)
+	if #tag_files == 0 then
+		vim.notify("caption-editor: No tag files provided. Set tag_validation.tag_files.", vim.log.levels.WARN)
+		return
 	end
 
-	if custom_tag_file_path and custom_tag_file_path ~= "" then
-		local custom_tags = load_single_file(custom_tag_file_path, "custom")
-		for tag, _ in pairs(custom_tags) do
+	for idx, filepath in ipairs(tag_files) do
+		local label = "file " .. idx
+		local file_tags = load_single_file(filepath, label)
+		for tag, _ in pairs(file_tags) do
 			valid_tags[tag] = true
 		end
-		loaded_count = loaded_count + vim.tbl_count(custom_tags)
-		if vim.tbl_count(custom_tags) > 0 then
+		loaded_count = loaded_count + vim.tbl_count(file_tags)
+		if vim.tbl_count(file_tags) > 0 then
 			vim.notify(
-				"caption-editor: Loaded " .. vim.tbl_count(custom_tags) .. " tags from custom file",
+				"caption-editor: Loaded " .. vim.tbl_count(file_tags) .. " tags from " .. filepath,
 				vim.log.levels.INFO
 			)
 		end
@@ -93,15 +84,15 @@ local function ensure_tags_loaded()
 	if tags_loaded then
 		return
 	end
-	if tag_file_path == "" and custom_tag_file_path == "" then
-		vim.notify("caption-editor: No tag file configured. Set tag_validation.tag_file.", vim.log.levels.WARN)
+	if #tag_files == 0 then
+		vim.notify("caption-editor: No tag files configured. Set tag_validation.tag_files.", vim.log.levels.WARN)
 		return
 	end
 	M.load_tags()
 	tags_loaded = true
 end
 
--- Check if tag is valid (this was missing!)
+-- Check if tag is valid
 function M.is_valid_tag(tag)
 	ensure_tags_loaded()
 	if not tag or tag == "" then
@@ -111,17 +102,9 @@ function M.is_valid_tag(tag)
 end
 
 -- Build search command (supports multiple files, suppresses file names)
-local function build_search_command(query, limit, program, tag_file, custom_tag_file)
+local function build_search_command(query, limit, program, files)
 	local limit_arg = limit and limit > 0 and ("-m " .. limit) or ""
 	local escaped_query = query:gsub('"', '\\"')
-
-	local files = {}
-	if tag_file and tag_file ~= "" then
-		table.insert(files, tag_file)
-	end
-	if custom_tag_file and custom_tag_file ~= "" then
-		table.insert(files, custom_tag_file)
-	end
 
 	if #files == 0 then
 		return nil
@@ -146,9 +129,9 @@ local function build_search_command(query, limit, program, tag_file, custom_tag_
 			file_args
 		)
 	elseif program == "git" or program == "git grep" then
-		-- git grep only supports one file, fallback to main file
-		local git_file = tag_file or custom_tag_file
-		if git_file then
+		-- git grep only supports one file, fallback to the first file
+		if #files > 0 then
+			local git_file = files[1]
 			return string.format(
 				'git -C "%s" grep -i -n -h %s "%s" 2>/dev/null',
 				vim.fn.fnamemodify(git_file, ":h"),
@@ -269,7 +252,7 @@ end
 -- Get suggestions from search program (with algorithm selection and caching)
 function M.get_suggestions(query, limit)
 	ensure_tags_loaded()
-	if not query or query == "" or (tag_file_path == "" and custom_tag_file_path == "") then
+	if not query or query == "" or #tag_files == 0 then
 		return {}
 	end
 
@@ -293,7 +276,7 @@ function M.get_suggestions(query, limit)
 
 	local results = {}
 
-	local cmd = build_search_command(query, max_candidates, program, tag_file_path, custom_tag_file_path)
+	local cmd = build_search_command(query, max_candidates, program, tag_files)
 	if not cmd then
 		return {}
 	end

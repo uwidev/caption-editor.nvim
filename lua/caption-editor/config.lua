@@ -16,8 +16,7 @@ local defaults = {
 	},
 	tag_validation = {
 		enabled = false,
-		tag_file = "",
-		custom_tag_file = "",
+		tag_files = {},
 		auto_validate = true,
 		show_suggestions = true,
 		debounce_ms = 200,
@@ -90,17 +89,29 @@ local function validate_config(opts)
 			valid.tag_validation.enabled = defaults.tag_validation.enabled
 		end
 
-		if valid.tag_validation.tag_file and type(valid.tag_validation.tag_file) ~= "string" then
-			vim.notify("caption-editor: tag_validation.tag_file must be a string, using default", vim.log.levels.WARN)
-			valid.tag_validation.tag_file = defaults.tag_validation.tag_file
-		end
-
-		if valid.tag_validation.custom_tag_file and type(valid.tag_validation.custom_tag_file) ~= "string" then
-			vim.notify(
-				"caption-editor: tag_validation.custom_tag_file must be a string, using default",
-				vim.log.levels.WARN
-			)
-			valid.tag_validation.custom_tag_file = defaults.tag_validation.custom_tag_file
+		if valid.tag_validation.tag_files then
+			if type(valid.tag_validation.tag_files) ~= "table" then
+				vim.notify("caption-editor: tag_validation.tag_files must be a table", vim.log.levels.WARN)
+				valid.tag_validation.tag_files = {}
+			else
+				for i, path in ipairs(valid.tag_validation.tag_files) do
+					if type(path) ~= "string" then
+						vim.notify(
+							"caption-editor: each tag file path must be a string, removing entry",
+							vim.log.levels.WARN
+						)
+						valid.tag_validation.tag_files[i] = nil
+					end
+				end
+				-- Remove nil entries
+				local cleaned = {}
+				for _, path in ipairs(valid.tag_validation.tag_files) do
+					if path then
+						table.insert(cleaned, path)
+					end
+				end
+				valid.tag_validation.tag_files = cleaned
+			end
 		end
 
 		if valid.tag_validation.auto_validate ~= nil and type(valid.tag_validation.auto_validate) ~= "boolean" then
