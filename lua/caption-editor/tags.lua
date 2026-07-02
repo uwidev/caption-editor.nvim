@@ -119,6 +119,74 @@ function M.is_valid_tag(tag)
 	return valid_tags[tag] or false
 end
 
+-- Generate query variations for broader search
+local function generate_query_variations(query)
+	local variations = { query }
+	local seen = {}
+	seen[query] = true
+
+	-- Remove trailing 's' (plural to singular)
+	if query:match("s$") then
+		local alt = query:sub(1, -2)
+		if not seen[alt] then
+			table.insert(variations, alt)
+			seen[alt] = true
+		end
+	end
+
+	-- Remove trailing '_s' (booru plural format)
+	if query:match("_s$") then
+		local alt = query:sub(1, -3)
+		if not seen[alt] then
+			table.insert(variations, alt)
+			seen[alt] = true
+		end
+	end
+
+	-- If query has multiple words, try removing the last word
+	local words = {}
+	for w in query:gmatch("%S+") do
+		table.insert(words, w)
+	end
+	if #words > 1 then
+		local alt = table.concat(words, " ", 1, #words - 1)
+		if not seen[alt] and alt ~= "" then
+			table.insert(variations, alt)
+			seen[alt] = true
+		end
+	end
+
+	return variations
+end
+
+-- Fetch candidates from search tool with query variations
+local function fetch_candidates(query, max_candidates, program)
+	local candidates = {}
+	local seen = {}
+
+	-- Generate variations
+	local variations = generate_query_variations(query)
+
+	for _, q in ipairs(variations) do
+		local cmd = build_search_command(q, max_candidates, program, tag_files)
+		if cmd then
+			local handle = io.popen(cmd)
+			if handle then
+				for line in handle:lines() do
+					local tag = line:match("^%s*(.-)%s*$")
+					if tag and tag ~= "" and not seen[tag] then
+						seen[tag] = true
+						table.insert(candidates, tag)
+					end
+				end
+				handle:close()
+			end
+		end
+	end
+
+	return candidates
+end
+
 -- Build search command (supports multiple files, suppresses file names)
 local function build_search_command(query, limit, program, files)
 	local limit_arg = limit and limit > 0 and ("-m " .. limit) or ""
@@ -290,6 +358,89 @@ local function prune_suggestion_cache()
 	end
 end
 
+-- Generate query variations for broader search
+local function generate_query_variations(query)
+	local variations = { query }
+	local seen = {}
+	seen[query] = true
+
+	-- Remove trailing 's' (plural to singular)
+	if query:match("s$") then
+		local alt = query:sub(1, -2)
+		if not seen[alt] then
+			table.insert(variations, alt)
+			seen[alt] = true
+		end
+	end
+
+	-- Remove trailing '_s' (booru plural format)
+	if query:match("_s$") then
+		local alt = query:sub(1, -3)
+		if not seen[alt] then
+			table.insert(variations, alt)
+			seen[alt] = true
+		end
+	end
+
+	-- If query has multiple words, try removing the last word
+	local words = {}
+	for w in query:gmatch("%S+") do
+		table.insert(words, w)
+	end
+	if #words > 1 then
+		local alt = table.concat(words, " ", 1, #words - 1)
+		if not seen[alt] and alt ~= "" then
+			table.insert(variations, alt)
+			seen[alt] = true
+		end
+	end
+
+	-- Try splitting by underscores if present
+	if query:find("_") then
+		local parts = {}
+		for p in query:gmatch("[^_]+") do
+			table.insert(parts, p)
+		end
+		if #parts > 1 then
+			-- Try without the last part
+			local alt = table.concat(parts, "_", 1, #parts - 1)
+			if not seen[alt] and alt ~= "" then
+				table.insert(variations, alt)
+				seen[alt] = true
+			end
+		end
+	end
+
+	return variations
+end
+
+-- Fetch candidates from search tool with query variations
+local function fetch_candidates(query, max_candidates, program)
+	local candidates = {}
+	local seen = {}
+
+	local variations = generate_query_variations(query)
+
+	for _, q in ipairs(variations) do
+		local cmd = build_search_command(q, max_candidates, program, tag_files)
+		if cmd then
+			local handle = io.popen(cmd)
+			if handle then
+				for line in handle:lines() do
+					local tag = line:match("^%s*(.-)%s*$")
+					if tag and tag ~= "" and not seen[tag] then
+						seen[tag] = true
+						table.insert(candidates, tag)
+					end
+				end
+				handle:close()
+			end
+		end
+	end
+
+	return candidates
+end
+
 -- Get suggestions from search program (with algorithm selection and caching)
 function M.get_suggestions(query, limit)
 	if not M.ensure_tags_loaded() then
@@ -319,59 +470,45 @@ function M.get_suggestions(query, limit)
 
 	local results = {}
 
-	local cmd = build_search_command(query, max_candidates, program, tag_files)
-	if not cmd then
-		return {}
-	end
+	-- Fetch candidates using the improved function (with query variations)
+	local candidates = fetch_candidates(query, max_candidates, program)
 
-	local handle = io.popen(cmd)
-	if handle then
-		local candidates = {}
-		for line in handle:lines() do
-			local tag = line:match("^%s*(.-)%s*$")
-			if tag and tag ~= "" then
-				table.insert(candidates, tag)
-			end
+	if algorithm == "levenshtein" then
+		local scored = {}
+		for _, tag in ipairs(candidates) do
+			table.insert(scored, { tag = tag, score = score_levenshtein(query, tag) })
 		end
-		handle:close()
-
-		if algorithm == "levenshtein" then
-			local scored = {}
-			for _, tag in ipairs(candidates) do
-				table.insert(scored, { tag = tag, score = score_levenshtein(query, tag) })
-			end
-			table.sort(scored, function(a, b)
-				return a.score > b.score
-			end)
-			for i = 1, math.min(limit, #scored) do
-				table.insert(results, scored[i].tag)
-			end
-		elseif algorithm == "token" then
-			local scored = {}
-			for _, tag in ipairs(candidates) do
-				table.insert(scored, { tag = tag, score = score_token(query, tag) })
-			end
-			table.sort(scored, function(a, b)
-				return a.score > b.score
-			end)
-			for i = 1, math.min(limit, #scored) do
-				table.insert(results, scored[i].tag)
-			end
-		elseif algorithm == "hybrid" then
-			local scored = {}
-			for _, tag in ipairs(candidates) do
-				table.insert(scored, { tag = tag, score = score_hybrid(query, tag) })
-			end
-			table.sort(scored, function(a, b)
-				return a.score > b.score
-			end)
-			for i = 1, math.min(limit, #scored) do
-				table.insert(results, scored[i].tag)
-			end
-		else
-			-- raw (original behavior)
-			results = candidates
+		table.sort(scored, function(a, b)
+			return a.score > b.score
+		end)
+		for i = 1, math.min(limit, #scored) do
+			table.insert(results, scored[i].tag)
 		end
+	elseif algorithm == "token" then
+		local scored = {}
+		for _, tag in ipairs(candidates) do
+			table.insert(scored, { tag = tag, score = score_token(query, tag) })
+		end
+		table.sort(scored, function(a, b)
+			return a.score > b.score
+		end)
+		for i = 1, math.min(limit, #scored) do
+			table.insert(results, scored[i].tag)
+		end
+	elseif algorithm == "hybrid" then
+		local scored = {}
+		for _, tag in ipairs(candidates) do
+			table.insert(scored, { tag = tag, score = score_hybrid(query, tag) })
+		end
+		table.sort(scored, function(a, b)
+			return a.score > b.score
+		end)
+		for i = 1, math.min(limit, #scored) do
+			table.insert(results, scored[i].tag)
+		end
+	else
+		-- raw (original behavior)
+		results = candidates
 	end
 
 	suggestion_cache[query] = {
@@ -760,7 +897,6 @@ function M.clear_all_diagnostics(buf)
 
 	vim.diagnostic.reset(ns, buf)
 	vim.diagnostic.reset(spell_ns, buf)
-
 end
 
 -- Refresh both diagnostics and quickfix list (manual refresh)
