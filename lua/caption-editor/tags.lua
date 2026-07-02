@@ -691,13 +691,13 @@ function M.get_tag_under_cursor()
 		-- Fallback: assume trimmed is at the beginning of the line
 		start = 1
 	end
-	start = start - 1  -- 0-indexed column
+	start = start - 1 -- 0-indexed column
 	local end_pos = start + #trimmed
 
 	return trimmed, start, end_pos
 end
 
--- Quick fix
+-- Quick fix / suggest similar tags (works on any tag, valid or invalid)
 function M.fix_tag()
 	if not M.ensure_tags_loaded() then
 		return
@@ -716,14 +716,14 @@ function M.fix_tag()
 		return
 	end
 
-	if M.is_valid_tag(tag) then
-		vim.notify("Tag is valid: " .. tag, vim.log.levels.INFO)
-		return
-	end
-
+	local is_valid = M.is_valid_tag(tag)
 	local suggestions = M.get_suggestions(tag)
 	if #suggestions == 0 then
-		vim.notify("No suggestions found for: " .. tag, vim.log.levels.WARN)
+		if is_valid then
+			vim.notify("No similar tags found for: " .. tag, vim.log.levels.INFO)
+		else
+			vim.notify("No suggestions found for: " .. tag, vim.log.levels.WARN)
+		end
 		return
 	end
 
@@ -731,7 +731,11 @@ function M.fix_tag()
 		vim.api.nvim_buf_set_text(buf, cursor[1] - 1, start, cursor[1] - 1, end_pos, { choice })
 		vim.api.nvim_win_set_cursor(0, { cursor[1], start + #choice })
 		M.validate_buffer(buf)
-		vim.notify("Fixed: " .. tag .. " -> " .. choice, vim.log.levels.INFO)
+		if is_valid then
+			vim.notify("Changed: " .. tag .. " -> " .. choice, vim.log.levels.INFO)
+		else
+			vim.notify("Fixed: " .. tag .. " -> " .. choice, vim.log.levels.INFO)
+		end
 	end
 
 	if #suggestions == 1 then
@@ -739,8 +743,11 @@ function M.fix_tag()
 		return
 	end
 
+	local prompt = is_valid and "Similar tags for '" .. tag .. "' (" .. #suggestions .. " matches):"
+		or "Replace '" .. tag .. "' with (" .. #suggestions .. " matches):"
+
 	vim.ui.select(suggestions, {
-		prompt = "Replace '" .. tag .. "' with (" .. #suggestions .. " matches):",
+		prompt = prompt,
 	}, function(choice)
 		if choice then
 			apply_fix(choice)
