@@ -685,7 +685,13 @@ function M.get_tag_under_cursor()
 	end
 
 	-- Find the position of the trimmed tag within the original line
-	local start = line:find(trimmed) - 1 -- 0-indexed column
+	-- Use plain=true to disable pattern matching (handles special characters like -)
+	local start = line:find(trimmed, 1, true)
+	if not start then
+		-- Fallback: assume trimmed is at the beginning of the line
+		start = 1
+	end
+	start = start - 1  -- 0-indexed column
 	local end_pos = start + #trimmed
 
 	return trimmed, start, end_pos
