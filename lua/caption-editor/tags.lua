@@ -581,8 +581,6 @@ function M.validate_buffer(buf)
 	if #spell_diagnostics > 0 then
 		vim.diagnostic.set(spell_ns, buf, spell_diagnostics)
 	end
-
-	editor.update_buffer_display(buf)
 end
 
 -- Get tag under cursor
