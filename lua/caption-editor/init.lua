@@ -15,7 +15,7 @@ function M.setup(opts)
 	if opts_config.tag_validation and opts_config.tag_validation.enabled then
 		local tag_file = opts_config.tag_validation.tag_file
 		if tag_file and tag_file ~= "" then
-			tags.set_tag_file(tag_file) -- just store the path, load later
+			tags.set_tag_file(tag_file)
 		end
 	end
 
@@ -120,7 +120,6 @@ function M.setup(opts)
 						local ext = vim.fn.fnamemodify(filepath, ":e"):lower()
 
 						if buftype == "" and filepath ~= "" and ext == "txt" then
-							-- This will trigger lazy loading of tags if needed
 							tags.schedule_validate(buf)
 						end
 					end

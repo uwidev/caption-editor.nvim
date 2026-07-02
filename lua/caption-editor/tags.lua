@@ -14,6 +14,11 @@ local diagnostic_cache = {}
 local validate_timer = nil
 local spell_ns = vim.api.nvim_create_namespace("caption-spell")
 local quickfix_open = false
+local invalid_count = 0
+
+function M.get_invalid_count()
+	return invalid_count
+end
 
 -- Store the tag file path for lazy loading
 function M.set_tag_file(filepath)
@@ -42,13 +47,10 @@ local function prune_suggestion_cache()
 	for key, _ in pairs(suggestion_cache) do
 		table.insert(keys, key)
 	end
-	-- If we're over limit, remove oldest entries
 	if #keys > limit then
-		-- Sort by timestamp (oldest first)
 		table.sort(keys, function(a, b)
 			return suggestion_cache[a].timestamp < suggestion_cache[b].timestamp
 		end)
-		-- Remove extras
 		for i = limit + 1, #keys do
 			suggestion_cache[keys[i]] = nil
 		end
@@ -190,7 +192,6 @@ function M.load_tags(filepath)
 		end
 	end
 
-	-- Clear suggestion cache on reload
 	suggestion_cache = {}
 	diagnostic_cache = {}
 
@@ -239,17 +240,14 @@ function M.get_suggestions(query, limit)
 		return {}
 	end
 
-	-- Check cache
 	local opts = config.get()
 	local ttl = opts.tag_validation.suggestion_cache_ttl or 300
 	local now = os.time()
 	local cache_entry = suggestion_cache[query]
 	if cache_entry then
-		-- If entry is still fresh (TTL not expired)
 		if now - cache_entry.timestamp < ttl then
 			return cache_entry.results
 		else
-			-- Expired, remove it
 			suggestion_cache[query] = nil
 		end
 	end
@@ -331,7 +329,6 @@ function M.get_suggestions(query, limit)
 			end
 		end
 	else
-		-- raw (original behavior)
 		local cmd = build_search_command(query, limit, program, tag_file_path)
 		local handle = io.popen(cmd)
 		if handle then
@@ -349,7 +346,6 @@ function M.get_suggestions(query, limit)
 		end
 	end
 
-	-- Store in cache with timestamp
 	suggestion_cache[query] = {
 		results = results,
 		timestamp = now,
@@ -512,6 +508,10 @@ function M.validate_buffer(buf)
 		end
 	end
 
+	-- Update invalid count
+	invalid_count = #tag_diagnostics
+	vim.g.caption_editor_invalid_count = invalid_count
+
 	if #tag_diagnostics > 0 then
 		vim.diagnostic.set(ns, buf, tag_diagnostics)
 	end
@@ -519,6 +519,9 @@ function M.validate_buffer(buf)
 	if #spell_diagnostics > 0 then
 		vim.diagnostic.set(spell_ns, buf, spell_diagnostics)
 	end
+
+	-- Refresh buffer name to show count
+	editor.update_buffer_display(buf)
 end
 
 -- Get tag under cursor
@@ -700,6 +703,9 @@ function M.clear_all_diagnostics(buf)
 
 	vim.diagnostic.reset(ns, buf)
 	vim.diagnostic.reset(spell_ns, buf)
+
+	invalid_count = 0
+	vim.g.caption_editor_invalid_count = 0
 end
 
 -- Refresh both diagnostics and quickfix list (manual refresh)

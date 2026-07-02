@@ -17,7 +17,6 @@ local function restore_buffer_name(buf)
 		return
 	end
 	if state.orig_name then
-		-- Restore the full path
 		vim.api.nvim_buf_set_name(buf, state.orig_name)
 		state.orig_name = nil
 	end
@@ -34,28 +33,46 @@ local function set_buffer_name(buf, active)
 		return
 	end
 
-	if active then
-		if current:match("^%[CE%] ") then
-			return
-		end
-		-- Store the original full path only once
-		if not state.orig_name then
-			state.orig_name = current
-		end
-		-- Use only the filename (tail) for display
-		local tail = vim.fn.fnamemodify(current, ':t')
-		vim.api.nvim_buf_set_name(buf, "[CE] " .. tail)
-	else
-		if current:match("^%[CE%] ") then
-			-- Restore the full path
-			if state.orig_name then
-				vim.api.nvim_buf_set_name(buf, state.orig_name)
-				state.orig_name = nil
-			else
-				local stripped = current:gsub("^%[CE%] ", "")
+	if not active then
+		-- Deactivating: restore original name if we have it
+		if state.orig_name then
+			vim.api.nvim_buf_set_name(buf, state.orig_name)
+			state.orig_name = nil
+		else
+			-- Fallback: strip any existing prefix
+			local stripped = current:gsub("^%[CE[^]]*%] ", "")
+			if stripped ~= current then
 				vim.api.nvim_buf_set_name(buf, stripped)
 			end
 		end
+		return
+	end
+
+	-- Active: store original name if not already stored
+	if not state.orig_name then
+		-- Strip any existing prefix to get the true original name
+		local stripped = current:gsub("^%[CE[^]]*%] ", "")
+		state.orig_name = stripped
+	end
+
+	-- Build new name from original full path
+	local tail = vim.fn.fnamemodify(state.orig_name, ":t")
+	local count = vim.g.caption_editor_invalid_count or 0
+	local opts = config.get()
+	local show_count = opts.tag_validation and opts.tag_validation.show_invalid_count or true
+
+	local new_name
+	if show_count and count > 0 then
+		new_name = "[CE: " .. count .. "] " .. tail
+	elseif show_count and count == 0 then
+		new_name = "[CE: ✓] " .. tail
+	else
+		new_name = "[CE] " .. tail
+	end
+
+	-- Only update if the name has changed
+	if current ~= new_name then
+		vim.api.nvim_buf_set_name(buf, new_name)
 	end
 end
 
@@ -366,7 +383,6 @@ function M.sync_state(buf)
 		return
 	end
 
-	-- Only sync state if this buffer is the one being edited by the plugin
 	if buf ~= state.buf then
 		return
 	end
@@ -380,7 +396,7 @@ function M.sync_state(buf)
 
 		restore_buffer_name(buf)
 
-		local tags = require('caption-editor.tags')
+		local tags = require("caption-editor.tags")
 		tags.clear_all_diagnostics(buf)
 		tags.close_quickfix()
 	end
@@ -522,7 +538,6 @@ function M.toggle()
 	M.sync_state(current_buf)
 
 	if state.active then
-		-- Toggle OFF
 		local opts = config.get()
 
 		create_undo_marker(state.buf)
@@ -535,14 +550,12 @@ function M.toggle()
 		tags.clear_all_diagnostics(state.buf)
 		tags.close_quickfix()
 
-		-- Restore original buffer name
 		restore_buffer_name(state.buf)
 
 		state.active = false
 		state.buf = nil
 		state.original_content = nil
 	else
-		-- Toggle ON
 		local opts = config.get()
 
 		create_undo_marker(current_buf)
@@ -553,9 +566,6 @@ function M.toggle()
 		if opts.auto_split then
 			split_buffer(current_buf)
 		end
-
-		-- Set buffer name with indicator
-		set_buffer_name(current_buf, true)
 
 		state.active = true
 
@@ -581,7 +591,6 @@ function M.on_buffer_change()
 
 	local opts = config.get()
 
-	-- Restore name of old buffer
 	if state.buf and vim.api.nvim_buf_is_valid(state.buf) then
 		restore_buffer_name(state.buf)
 	end
@@ -597,7 +606,6 @@ function M.on_buffer_change()
 		split_buffer(current_buf)
 	end
 
-	-- Set indicator on new buffer
 	set_buffer_name(current_buf, true)
 end
 
@@ -646,25 +654,36 @@ function M.get_state()
 end
 
 function M.get_status()
-    return state.active and "[CE]" or ""
+	return state.active and "[CE]" or ""
 end
 
 function M.update_winbar()
-    if not config.get().tag_validation.show_status then
-        return
-    end
+	if not config.get().tag_validation.show_status then
+		return
+	end
 
-    local buf = vim.api.nvim_get_current_buf()
-    if not is_caption_file(buf) then
-        vim.opt_local.winbar = ""
-        return
-    end
+	local buf = vim.api.nvim_get_current_buf()
+	if not is_caption_file(buf) then
+		vim.opt_local.winbar = ""
+		return
+	end
 
-    if state.active then
-        vim.opt_local.winbar = "[CE]"
-    else
-        vim.opt_local.winbar = ""
-    end
+	if state.active then
+		vim.opt_local.winbar = "[CE]"
+	else
+		vim.opt_local.winbar = ""
+	end
+end
+
+function M.update_buffer_display(buf)
+	if not buf then
+		buf = vim.api.nvim_get_current_buf()
+	end
+	if state.active then
+		set_buffer_name(buf, true)
+	else
+		set_buffer_name(buf, false)
+	end
 end
 
 return M
