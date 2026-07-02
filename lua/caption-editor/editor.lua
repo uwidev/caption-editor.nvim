@@ -3,26 +3,67 @@
 local M = {}
 local config = require("caption-editor.config")
 
+vim.g.caption_editor_invalid_count = 0
+
 local state = {
 	active = false,
 	buf = nil,
 	original_content = nil,
 	saving = false,
-	orig_name = nil,
 }
 
--- Store the original full path
-local function restore_buffer_name(buf)
-	if not buf or not vim.api.nvim_buf_is_valid(buf) then
-		return
+-- Table to store prefixed buffers and their original names + last count
+-- key: buffer number, value: { orig_name, last_count }
+local prefixed_buffers = {}
+
+-- Restore original name for all prefixed buffers
+local function restore_all_prefixed_buffers()
+	for buf, data in pairs(prefixed_buffers) do
+		if vim.api.nvim_buf_is_valid(buf) then
+			pcall(function()
+				vim.api.nvim_buf_set_name(buf, data.orig_name)
+			end)
+		end
 	end
-	if state.orig_name then
-		vim.api.nvim_buf_set_name(buf, state.orig_name)
-		state.orig_name = nil
+	prefixed_buffers = {}
+end
+
+-- Temporarily restore original names for all prefixed buffers (for saving)
+local function restore_original_names_for_write()
+	for buf, data in pairs(prefixed_buffers) do
+		if vim.api.nvim_buf_is_valid(buf) then
+			pcall(function()
+				vim.api.nvim_buf_set_name(buf, data.orig_name)
+			end)
+		end
 	end
 end
 
--- Set buffer name to short form with indicator
+-- Reapply prefixed names after write
+local function reapply_prefixed_names()
+	for buf, data in pairs(prefixed_buffers) do
+		if vim.api.nvim_buf_is_valid(buf) then
+			pcall(function()
+				local tail = vim.fn.fnamemodify(data.orig_name, ":t")
+				local count = vim.g.caption_editor_invalid_count or 0
+				local opts = config.get()
+				local show_count = opts.tag_validation and opts.tag_validation.show_invalid_count or true
+				local new_name
+				if show_count and count > 0 then
+					new_name = "[CE: " .. count .. "] " .. tail
+				elseif show_count and count == 0 then
+					new_name = "[CE: ✓] " .. tail
+				else
+					new_name = "[CE] " .. tail
+				end
+				vim.api.nvim_buf_set_name(buf, new_name)
+				prefixed_buffers[buf].last_count = count
+			end)
+		end
+	end
+end
+
+-- Set buffer name with indicator
 local function set_buffer_name(buf, active)
 	if not buf or not vim.api.nvim_buf_is_valid(buf) then
 		return
@@ -34,12 +75,11 @@ local function set_buffer_name(buf, active)
 	end
 
 	if not active then
-		-- Deactivating: restore original name if we have it
-		if state.orig_name then
-			vim.api.nvim_buf_set_name(buf, state.orig_name)
-			state.orig_name = nil
+		local data = prefixed_buffers[buf]
+		if data then
+			vim.api.nvim_buf_set_name(buf, data.orig_name)
+			prefixed_buffers[buf] = nil
 		else
-			-- Fallback: strip any existing prefix
 			local stripped = current:gsub("^%[CE[^]]*%] ", "")
 			if stripped ~= current then
 				vim.api.nvim_buf_set_name(buf, stripped)
@@ -48,15 +88,14 @@ local function set_buffer_name(buf, active)
 		return
 	end
 
-	-- Active: store original name if not already stored
-	if not state.orig_name then
-		-- Strip any existing prefix to get the true original name
+	if not prefixed_buffers[buf] then
 		local stripped = current:gsub("^%[CE[^]]*%] ", "")
-		state.orig_name = stripped
+		prefixed_buffers[buf] = { orig_name = stripped, last_count = 0 }
 	end
 
-	-- Build new name from original full path
-	local tail = vim.fn.fnamemodify(state.orig_name, ":t")
+	local data = prefixed_buffers[buf]
+	local orig_path = data.orig_name
+	local tail = vim.fn.fnamemodify(orig_path, ":t")
 	local count = vim.g.caption_editor_invalid_count or 0
 	local opts = config.get()
 	local show_count = opts.tag_validation and opts.tag_validation.show_invalid_count or true
@@ -70,9 +109,9 @@ local function set_buffer_name(buf, active)
 		new_name = "[CE] " .. tail
 	end
 
-	-- Only update if the name has changed
-	if current ~= new_name then
+	if current ~= new_name or data.last_count ~= count then
 		vim.api.nvim_buf_set_name(buf, new_name)
+		data.last_count = count
 	end
 end
 
@@ -128,7 +167,6 @@ local function split(content, delimiter, keep_empty)
 end
 
 -- Split text by sentences (., !, ?)
--- Hardcoded to handle decimals (e.g., 6.25)
 local function split_sentences(text)
 	if not text or text == "" then
 		return {}
@@ -331,9 +369,15 @@ local function create_undo_marker(buf)
 	end
 end
 
--- Check if caption file
+-- Check if caption file (uses original name from prefixed_buffers if available)
 local function is_caption_file(buf)
-	local filepath = vim.api.nvim_buf_get_name(buf)
+	local filepath
+	local data = prefixed_buffers[buf]
+	if data then
+		filepath = data.orig_name
+	else
+		filepath = vim.api.nvim_buf_get_name(buf)
+	end
 	if filepath == "" then
 		return false
 	end
@@ -394,7 +438,8 @@ function M.sync_state(buf)
 		state.buf = nil
 		state.original_content = nil
 
-		restore_buffer_name(buf)
+		restore_all_prefixed_buffers()
+		vim.g.caption_editor_invalid_count = 0
 
 		local tags = require("caption-editor.tags")
 		tags.clear_all_diagnostics(buf)
@@ -550,7 +595,8 @@ function M.toggle()
 		tags.clear_all_diagnostics(state.buf)
 		tags.close_quickfix()
 
-		restore_buffer_name(state.buf)
+		restore_all_prefixed_buffers()
+		vim.g.caption_editor_invalid_count = 0
 
 		state.active = false
 		state.buf = nil
@@ -571,6 +617,7 @@ function M.toggle()
 
 		local tags = require("caption-editor.tags")
 		tags.validate_buffer(current_buf)
+		M.update_buffer_display(current_buf)
 	end
 end
 
@@ -591,10 +638,6 @@ function M.on_buffer_change()
 
 	local opts = config.get()
 
-	if state.buf and vim.api.nvim_buf_is_valid(state.buf) then
-		restore_buffer_name(state.buf)
-	end
-
 	if state.buf and vim.api.nvim_buf_is_valid(state.buf) and opts.auto_unsplit then
 		unsplit_buffer(state.buf)
 	end
@@ -606,7 +649,9 @@ function M.on_buffer_change()
 		split_buffer(current_buf)
 	end
 
-	set_buffer_name(current_buf, true)
+	local tags = require("caption-editor.tags")
+	tags.validate_buffer(current_buf)
+	M.update_buffer_display(current_buf)
 end
 
 function M.on_buffer_write()
@@ -627,9 +672,14 @@ function M.on_buffer_write()
 	if content:find("\n") then
 		local view = vim.fn.winsaveview()
 
+		restore_original_names_for_write()
+
 		unsplit_buffer(current_buf)
 
 		vim.schedule(function()
+			if state.active then
+				reapply_prefixed_names()
+			end
 			if state.active and state.buf == current_buf and opts.auto_split then
 				split_buffer(current_buf)
 				vim.fn.winrestview(view)
@@ -646,6 +696,10 @@ function M.on_buffer_delete(buf)
 		state.active = false
 		state.buf = nil
 		state.original_content = nil
+	end
+
+	if prefixed_buffers[buf] then
+		prefixed_buffers[buf] = nil
 	end
 end
 

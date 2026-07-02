@@ -508,7 +508,6 @@ function M.validate_buffer(buf)
 		end
 	end
 
-	-- Update invalid count
 	invalid_count = #tag_diagnostics
 	vim.g.caption_editor_invalid_count = invalid_count
 
@@ -520,7 +519,6 @@ function M.validate_buffer(buf)
 		vim.diagnostic.set(spell_ns, buf, spell_diagnostics)
 	end
 
-	-- Refresh buffer name to show count
 	editor.update_buffer_display(buf)
 end
 
