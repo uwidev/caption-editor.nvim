@@ -712,26 +712,20 @@ function M.validate_buffer(buf)
 	end
 end
 
--- Get tag under cursor
+-- Get tag under cursor (assumes each line is a single tag in split view)
 function M.get_tag_under_cursor()
 	local line = vim.api.nvim_get_current_line()
-	local col = vim.api.nvim_win_get_cursor(0)[2]
+	local trimmed = line:match("^%s*(.-)%s*$")
 
-	local start = col
-	while start > 0 and line:sub(start, start):match("[%a%d_%s]") do
-		start = start - 1
-	end
-	if start > 0 and (line:sub(start, start) == " " or line:sub(start, start) == ",") then
-		start = start + 1
+	if trimmed == "" then
+		return nil, 0, 0
 	end
 
-	local end_pos = col
-	while end_pos < #line and line:sub(end_pos + 1, end_pos + 1):match("[%a%d_%s]") do
-		end_pos = end_pos + 1
-	end
+	-- Find the position of the trimmed tag within the original line
+	local start = line:find(trimmed) - 1  -- 0-indexed column
+	local end_pos = start + #trimmed
 
-	local tag = line:sub(start + 1, end_pos)
-	return tag, start, end_pos
+	return trimmed, start, end_pos
 end
 
 -- Quick fix
