@@ -10,6 +10,7 @@ vim.pack.add { gh 'uwidev/caption-editor.nvim' }
 require('caption-editor').setup {
 	keymaps = {
 		toggle = "<leader>ce",
+		fix_tag = "<leader>tf",
 	},
 	auto_split = true,
 	auto_unsplit = true,
@@ -33,7 +34,6 @@ require('caption-editor').setup {
 		max_candidates = 200,
 		suggestion_cache_ttl = 300,
 		suggestion_cache_limit = 100,
-		show_invalid_count = true,
 	},
 }
 ```
@@ -46,6 +46,7 @@ require('caption-editor').setup {
 		require('caption-editor').setup({
 			keymaps = {
 				toggle = "<leader>ce",
+				fix_tag = "<leader>tf",
 			},
 			auto_split = true,
 			auto_unsplit = true,
@@ -69,7 +70,6 @@ require('caption-editor').setup {
 				max_candidates = 200,
 				suggestion_cache_ttl = 300,
 				suggestion_cache_limit = 100,
-				show_invalid_count = true,
 			},
 		})
 	end
@@ -81,6 +81,7 @@ require('caption-editor').setup {
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `keymaps.toggle` | `string` | `"<leader>ce"` | Keymap to toggle editor mode |
+| `keymaps.fix_tag` | `string` | `"<leader>tf"` | Keymap to fix or suggest similar tag |
 | `auto_split` | `boolean` | `true` | Auto-split when toggled on |
 | `auto_unsplit` | `boolean` | `true` | Auto-unsplit when toggled off or buffer changes |
 | `delimiter` | `string` | `","` | Delimiter for splitting tags |
@@ -128,16 +129,6 @@ She is looking at the viewer.
 @my special tag ||| 1girl, solo, looking at viewer, short hair ||| A girl with short hair. She is looking at the viewer.
 ```
 
-### Buffer Name Indicator
-
-When the plugin is active, the buffer name shows the editor state:
-
-| State | Buffer name |
-|-------|-------------|
-| Plugin OFF | `foo.txt` |
-| Plugin ON, 0 invalid tags | `[CE: ✓] foo.txt` |
-| Plugin ON, 3 invalid tags | `[CE: 3] foo.txt` |
-
 ### Section Types
 
 - **`"tags"`**: Split by `delimiter`
@@ -148,7 +139,7 @@ When the plugin is active, the buffer name shows the editor state:
 | Command/Keymap | Description |
 |----------------|-------------|
 | `<leader>tv` / `:CaptionValidateTags` | Validate tags and refresh quickfix list |
-| `<leader>tf` / `:CaptionFixTag` | Fix tag under cursor |
+| `<leader>tf` / `:CaptionFixTag` | Fix tag under cursor (or suggest similar tags for any tag) |
 | `:CaptionEditorClearCache` | Clear suggestion cache (useful after tag file update) |
 | `:CaptionEditorReloadTags` | Reload tag files without restarting Neovim |
 
@@ -156,15 +147,26 @@ When the plugin is active, the buffer name shows the editor state:
 
 - `:CaptionEditorToggle` - Toggle editor mode
 - `:CaptionValidateTags` - Validate tags and refresh quickfix
-- `:CaptionFixTag` - Fix tag under cursor
+- `:CaptionFixTag` - Fix tag under cursor (or suggest similar tags for any tag)
 - `:CaptionEditorClearCache` - Clear suggestion cache
 - `:CaptionEditorReloadTags` - Reload tag files
+
+## Save Behavior
+
+When the plugin is toggled on and you write (`:w`) the file, the plugin automatically:
+- Unsplits the buffer (joins all lines into a single line)
+- Writes the file (single-line format)
+- Resplits the buffer back to multi-line view
+- Refreshes the quickfix list (if open)
+
+This ensures that the file is always saved in the correct single-line format, while you continue editing in the split view. No manual toggling off is required before saving.
 
 ## Notes
 
 - Tags are loaded lazily (only on first validation/fix) to reduce startup overhead.
 - Suggestion results are cached for faster repeated queries. Cache TTL and size are configurable.
 - Multiple tag files can be provided; they are unioned for validation and suggestions.
+- `<leader>tf` works on any tag (valid or invalid) to find similar tags.
 
 ---
 
