@@ -23,7 +23,7 @@ require('caption-editor').setup {
 	},
 	tag_validation = {
 		enabled = false,
-		tag_file = "",
+		tag_files = { "/path/to/danbooru_tags.txt" },
 		auto_validate = true,
 		show_suggestions = true,
 		debounce_ms = 200,
@@ -33,6 +33,7 @@ require('caption-editor').setup {
 		max_candidates = 200,
 		suggestion_cache_ttl = 300,
 		suggestion_cache_limit = 100,
+		show_invalid_count = true,
 	},
 }
 ```
@@ -58,7 +59,7 @@ require('caption-editor').setup {
 			},
 			tag_validation = {
 				enabled = false,
-				tag_file = "",
+				tag_files = { "/path/to/danbooru_tags.txt" },
 				auto_validate = true,
 				show_suggestions = true,
 				debounce_ms = 200,
@@ -68,6 +69,7 @@ require('caption-editor').setup {
 				max_candidates = 200,
 				suggestion_cache_ttl = 300,
 				suggestion_cache_limit = 100,
+				show_invalid_count = true,
 			},
 		})
 	end
@@ -86,7 +88,7 @@ require('caption-editor').setup {
 | `section_delimiter` | `string` | `"|||"` | Delimiter between sections |
 | `section_types` | `table` | `{"tags", "tags", "nl"}` | Type for each section (`"tags"` or `"nl"`) |
 | `tag_validation.enabled` | `boolean` | `false` | Enable tag validation |
-| `tag_validation.tag_file` | `string` | `""` | Path to danbooru tags file |
+| `tag_validation.tag_files` | `table` | `{}` | List of tag database file paths |
 | `tag_validation.auto_validate` | `boolean` | `true` | Auto-validate on text changes |
 | `tag_validation.show_suggestions` | `boolean` | `true` | Show suggestions in diagnostic messages |
 | `tag_validation.debounce_ms` | `number` | `200` | Debounce delay in milliseconds |
@@ -96,6 +98,7 @@ require('caption-editor').setup {
 | `tag_validation.max_candidates` | `number` | `200` | Candidate pool size for ranking |
 | `tag_validation.suggestion_cache_ttl` | `number` | `300` | Time-to-live for suggestion cache in seconds |
 | `tag_validation.suggestion_cache_limit` | `number` | `100` | Max number of cached queries |
+| `tag_validation.show_invalid_count` | `boolean` | `true` | Show invalid tag count in buffer name (`[CE: N]`) |
 
 ## Usage
 
@@ -126,6 +129,16 @@ She is looking at the viewer.
 @my special tag ||| 1girl, solo, looking at viewer, short hair ||| A girl with short hair. She is looking at the viewer.
 ```
 
+### Buffer Name Indicator
+
+When the plugin is active, the buffer name shows the editor state:
+
+| State | Buffer name |
+|-------|-------------|
+| Plugin OFF | `foo.txt` |
+| Plugin ON, 0 invalid tags | `[CE: ✓] foo.txt` |
+| Plugin ON, 3 invalid tags | `[CE: 3] foo.txt` |
+
 ### Section Types
 
 - **`"tags"`**: Split by `delimiter`
@@ -138,6 +151,7 @@ She is looking at the viewer.
 | `<leader>tv` / `:CaptionValidateTags` | Validate tags and refresh quickfix list |
 | `<leader>tf` / `:CaptionFixTag` | Fix tag under cursor |
 | `:CaptionEditorClearCache` | Clear suggestion cache (useful after tag file update) |
+| `:CaptionEditorReloadTags` | Reload tag files without restarting Neovim |
 
 ## Commands
 
@@ -145,11 +159,13 @@ She is looking at the viewer.
 - `:CaptionValidateTags` - Validate tags and refresh quickfix
 - `:CaptionFixTag` - Fix tag under cursor
 - `:CaptionEditorClearCache` - Clear suggestion cache
+- `:CaptionEditorReloadTags` - Reload tag files
 
 ## Notes
 
 - Tags are loaded lazily (only on first validation/fix) to reduce startup overhead.
 - Suggestion results are cached for faster repeated queries. Cache TTL and size are configurable.
+- Multiple tag files can be provided; they are unioned for validation and suggestions.
 
 ---
 
