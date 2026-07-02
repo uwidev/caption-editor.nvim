@@ -569,9 +569,11 @@ function M.on_buffer_write()
 				vim.fn.winrestview(view)
 			end
 
-			-- Refresh quickfix list after save and resplit
+			-- Refresh quickfix list after save and resplit ONLY if it was already open
 			local tags = require("caption-editor.tags")
-			tags.list_invalid_tags(current_buf, false)
+			if tags.is_quickfix_open() then
+				tags.list_invalid_tags(current_buf, false)
+			end
 
 			state.saving = false
 		end)
