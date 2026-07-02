@@ -98,7 +98,6 @@ require('caption-editor').setup {
 | `tag_validation.max_candidates` | `number` | `200` | Candidate pool size for ranking |
 | `tag_validation.suggestion_cache_ttl` | `number` | `300` | Time-to-live for suggestion cache in seconds |
 | `tag_validation.suggestion_cache_limit` | `number` | `100` | Max number of cached queries |
-| `tag_validation.show_invalid_count` | `boolean` | `true` | Show invalid tag count in buffer name (`[CE: N]`) |
 
 ## Usage
 

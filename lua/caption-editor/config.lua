@@ -26,7 +26,6 @@ local defaults = {
 		max_candidates = 200,
 		suggestion_cache_ttl = 300,
 		suggestion_cache_limit = 100,
-		show_invalid_count = true,
 	},
 }
 

@@ -14,11 +14,6 @@ local diagnostic_cache = {}
 local validate_timer = nil
 local spell_ns = vim.api.nvim_create_namespace("caption-spell")
 local quickfix_open = false
-local invalid_count = 0
-
-function M.get_invalid_count()
-	return invalid_count
-end
 
 -- Store the list of tag files
 function M.set_tag_files(files)
@@ -571,9 +566,6 @@ function M.validate_buffer(buf)
 		end
 	end
 
-	invalid_count = #tag_diagnostics
-	vim.g.caption_editor_invalid_count = invalid_count
-
 	if #tag_diagnostics > 0 then
 		vim.diagnostic.set(ns, buf, tag_diagnostics)
 	end
@@ -769,8 +761,6 @@ function M.clear_all_diagnostics(buf)
 	vim.diagnostic.reset(ns, buf)
 	vim.diagnostic.reset(spell_ns, buf)
 
-	invalid_count = 0
-	vim.g.caption_editor_invalid_count = 0
 end
 
 -- Refresh both diagnostics and quickfix list (manual refresh)

@@ -3,8 +3,6 @@
 local M = {}
 local config = require("caption-editor.config")
 
-vim.g.caption_editor_invalid_count = 0
-
 local state = {
 	active = false,
 	buf = nil,
@@ -329,8 +327,6 @@ function M.sync_state(buf)
 		state.buf = nil
 		state.original_content = nil
 
-		vim.g.caption_editor_invalid_count = 0
-
 		local tags = require("caption-editor.tags")
 		tags.clear_all_diagnostics(buf)
 		tags.close_quickfix()
@@ -485,8 +481,6 @@ function M.toggle()
 		tags.clear_all_diagnostics(state.buf)
 		tags.close_quickfix()
 
-		vim.g.caption_editor_invalid_count = 0
-
 		state.active = false
 		state.buf = nil
 		state.original_content = nil
@@ -596,10 +590,6 @@ end
 
 function M.get_state()
 	return state
-end
-
-function M.get_status()
-	return state.active and "[CE]" or ""
 end
 
 return M
