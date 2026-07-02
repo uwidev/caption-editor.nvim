@@ -506,6 +506,10 @@ function M.toggle()
 
 		local tags = require("caption-editor.tags")
 		tags.validate_buffer(current_buf)
+
+		if tags.is_quickfix_open() then
+			tags.list_invalid_tags(current_buf, false)
+		end
 	end
 end
 
@@ -539,6 +543,10 @@ function M.on_buffer_change()
 
 	local tags = require("caption-editor.tags")
 	tags.validate_buffer(current_buf)
+
+	if tags.is_quickfix_open() then
+		tags.list_invalid_tags(current_buf, true)
+	end
 end
 
 function M.on_buffer_write()
@@ -569,7 +577,7 @@ function M.on_buffer_write()
 
 			-- Refresh quickfix list after save and resplit
 			local tags = require("caption-editor.tags")
-			tags.list_invalid_tags(current_buf)
+			tags.list_invalid_tags(current_buf, false)
 
 			state.saving = false
 		end)

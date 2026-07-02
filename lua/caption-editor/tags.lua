@@ -662,7 +662,9 @@ function M.is_quickfix_open()
 end
 
 -- List invalid tags in quickfix
-function M.list_invalid_tags(buf)
+-- If reset_idx is true, the selection index is set to 1 (first entry),
+-- otherwise it preserves the current selection index.
+function M.list_invalid_tags(buf, reset_idx)
 	if not M.ensure_tags_loaded() then
 		return
 	end
@@ -680,7 +682,7 @@ function M.list_invalid_tags(buf)
 	local qf_list = {}
 
 	local saved_idx = 1
-	if quickfix_open then
+	if not reset_idx then
 		local info = vim.fn.getqflist({ idx = 0 })
 		if info and info.idx then
 			saved_idx = info.idx
@@ -787,7 +789,7 @@ function M.refresh_all(buf)
 	end
 
 	M.validate_buffer(buf)
-	M.list_invalid_tags(buf)
+	M.list_invalid_tags(buf, false)
 end
 
 return M
