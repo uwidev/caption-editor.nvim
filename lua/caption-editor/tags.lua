@@ -119,6 +119,14 @@ function M.is_valid_tag(tag)
 	return valid_tags[tag] or false
 end
 
+-- Redraw image preview if caption-image-preview is installed
+local function redraw_image_preview()
+	local ok, preview = pcall(require, 'caption-image-preview.preview')
+	if ok and preview and preview.redraw_preview then
+		preview.redraw_preview()
+	end
+end
+
 -- Build search command (supports multiple files, suppresses file names)
 local function build_search_command(query, limit, program, files)
 	local limit_arg = limit and limit > 0 and ("-m " .. limit) or ""
@@ -728,14 +736,18 @@ function M.fix_tag()
 	end
 
 	local function apply_fix(choice)
+		-- Replace the tag
 		vim.api.nvim_buf_set_text(buf, cursor[1] - 1, start, cursor[1] - 1, end_pos, { choice })
 		vim.api.nvim_win_set_cursor(0, { cursor[1], start + #choice })
+		-- Re-validate the buffer
 		M.validate_buffer(buf)
 		if is_valid then
 			vim.notify("Changed: " .. tag .. " -> " .. choice, vim.log.levels.INFO)
 		else
 			vim.notify("Fixed: " .. tag .. " -> " .. choice, vim.log.levels.INFO)
 		end
+		-- Redraw image preview after the floating window closes
+		redraw_image_preview()
 	end
 
 	if #suggestions == 1 then
@@ -743,14 +755,16 @@ function M.fix_tag()
 		return
 	end
 
-	local prompt = is_valid and "Similar tags for '" .. tag .. "' (" .. #suggestions .. " matches):"
-		or "Replace '" .. tag .. "' with (" .. #suggestions .. " matches):"
+	local prompt = is_valid and "Similar tags for '" .. tag .. "' (" .. #suggestions .. " matches):" or "Replace '" .. tag .. "' with (" .. #suggestions .. " matches):"
 
 	vim.ui.select(suggestions, {
 		prompt = prompt,
 	}, function(choice)
 		if choice then
 			apply_fix(choice)
+		else
+			-- User cancelled, redraw the image preview to clean up
+			redraw_image_preview()
 		end
 	end)
 end
