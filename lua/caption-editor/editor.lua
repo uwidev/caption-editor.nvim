@@ -266,6 +266,7 @@ local function create_undo_marker(buf)
 	end
 end
 
+-- Check if caption file
 local function is_caption_file(buf)
 	local filepath = vim.api.nvim_buf_get_name(buf)
 	if filepath == "" then
@@ -565,6 +566,11 @@ function M.on_buffer_write()
 				split_buffer(current_buf)
 				vim.fn.winrestview(view)
 			end
+
+			-- Refresh quickfix list after save and resplit
+			local tags = require("caption-editor.tags")
+			tags.list_invalid_tags(current_buf)
+
 			state.saving = false
 		end)
 	else
