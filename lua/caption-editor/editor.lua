@@ -16,6 +16,17 @@ local state = {
 -- key: buffer number, value: { orig_name, last_count }
 local prefixed_buffers = {}
 
+local function build_prefix_name(orig_path, count, show_count)
+	local tail = vim.fn.fnamemodify(orig_path, ":t")
+	if show_count and count > 0 then
+		return "[CE: " .. count .. "] " .. tail
+	elseif show_count and count == 0 then
+		return "[CE: ✓] " .. tail
+	else
+		return "[CE] " .. tail
+	end
+end
+
 -- Restore original name for all prefixed buffers
 local function restore_all_prefixed_buffers()
 	for buf, data in pairs(prefixed_buffers) do
@@ -39,23 +50,14 @@ local function restore_original_names_for_write()
 	end
 end
 
--- Reapply prefixed names after write
 local function reapply_prefixed_names()
 	for buf, data in pairs(prefixed_buffers) do
 		if vim.api.nvim_buf_is_valid(buf) then
 			pcall(function()
-				local tail = vim.fn.fnamemodify(data.orig_name, ":t")
 				local count = vim.g.caption_editor_invalid_count or 0
 				local opts = config.get()
 				local show_count = opts.tag_validation and opts.tag_validation.show_invalid_count or true
-				local new_name
-				if show_count and count > 0 then
-					new_name = "[CE: " .. count .. "] " .. tail
-				elseif show_count and count == 0 then
-					new_name = "[CE: ✓] " .. tail
-				else
-					new_name = "[CE] " .. tail
-				end
+				local new_name = build_prefix_name(data.orig_name, count, show_count)
 				vim.api.nvim_buf_set_name(buf, new_name)
 				prefixed_buffers[buf].last_count = count
 			end)
@@ -94,20 +96,11 @@ local function set_buffer_name(buf, active)
 	end
 
 	local data = prefixed_buffers[buf]
-	local orig_path = data.orig_name
-	local tail = vim.fn.fnamemodify(orig_path, ":t")
 	local count = vim.g.caption_editor_invalid_count or 0
 	local opts = config.get()
 	local show_count = opts.tag_validation and opts.tag_validation.show_invalid_count or true
 
-	local new_name
-	if show_count and count > 0 then
-		new_name = "[CE: " .. count .. "] " .. tail
-	elseif show_count and count == 0 then
-		new_name = "[CE: ✓] " .. tail
-	else
-		new_name = "[CE] " .. tail
-	end
+	local new_name = build_prefix_name(data.orig_name, count, show_count)
 
 	if current ~= new_name or data.last_count ~= count then
 		vim.api.nvim_buf_set_name(buf, new_name)
@@ -357,6 +350,8 @@ local function create_undo_marker(buf)
 		return
 	end
 
+	-- Create a dummy undo entry so that the subsequent split/unsplit can be joined with it.
+	-- This makes the toggle operation a single undo step even on a fresh buffer.
 	local changedtick = vim.api.nvim_buf_get_changedtick(buf)
 	if changedtick == 0 then
 		local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
@@ -369,7 +364,6 @@ local function create_undo_marker(buf)
 	end
 end
 
--- Check if caption file (uses original name from prefixed_buffers if available)
 local function is_caption_file(buf)
 	local filepath
 	local data = prefixed_buffers[buf]

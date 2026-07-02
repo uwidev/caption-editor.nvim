@@ -50,51 +50,74 @@ end
 function M.load_tags()
 	valid_tags = {}
 	local loaded_count = 0
+	local success = false
+	local errors = {}
 
 	if #tag_files == 0 then
 		vim.notify("caption-editor: No tag files provided. Set tag_validation.tag_files.", vim.log.levels.WARN)
-		return
+		return false
 	end
 
 	for idx, filepath in ipairs(tag_files) do
 		local label = "file " .. idx
-		local file_tags = load_single_file(filepath, label)
-		for tag, _ in pairs(file_tags) do
-			valid_tags[tag] = true
-		end
-		loaded_count = loaded_count + vim.tbl_count(file_tags)
-		if vim.tbl_count(file_tags) > 0 then
-			vim.notify(
-				"caption-editor: Loaded " .. vim.tbl_count(file_tags) .. " tags from " .. filepath,
-				vim.log.levels.INFO
-			)
+		local ok, result = pcall(load_single_file, filepath, label)
+		if not ok then
+			table.insert(errors, filepath .. ": " .. result)
+		else
+			local file_tags = result
+			for tag, _ in pairs(file_tags) do
+				valid_tags[tag] = true
+			end
+			loaded_count = loaded_count + vim.tbl_count(file_tags)
+			if vim.tbl_count(file_tags) > 0 then
+				vim.notify(
+					"caption-editor: Loaded " .. vim.tbl_count(file_tags) .. " tags from " .. filepath,
+					vim.log.levels.INFO
+				)
+			end
 		end
 	end
 
 	if loaded_count > 0 then
 		vim.notify("caption-editor: Total " .. vim.tbl_count(valid_tags) .. " tags loaded", vim.log.levels.INFO)
+		success = true
+	else
+		vim.notify("caption-editor: Failed to load any tags from " .. #tag_files .. " file(s)", vim.log.levels.ERROR)
+		if #errors > 0 then
+			for _, err in ipairs(errors) do
+				vim.notify("caption-editor: " .. err, vim.log.levels.ERROR)
+			end
+		end
 	end
 
 	suggestion_cache = {}
 	diagnostic_cache = {}
+	return success
 end
 
 -- Ensure tags are loaded
-local function ensure_tags_loaded()
+function M.ensure_tags_loaded()
 	if tags_loaded then
-		return
+		return true
 	end
 	if #tag_files == 0 then
 		vim.notify("caption-editor: No tag files configured. Set tag_validation.tag_files.", vim.log.levels.WARN)
-		return
+		return false
 	end
-	M.load_tags()
+	local ok, err = pcall(M.load_tags)
+	if not ok then
+		vim.notify("caption-editor: Failed to load tags: " .. err, vim.log.levels.ERROR)
+		return false
+	end
 	tags_loaded = true
+	return true
 end
 
 -- Check if tag is valid
 function M.is_valid_tag(tag)
-	ensure_tags_loaded()
+	if not M.ensure_tags_loaded() then
+		return false
+	end
 	if not tag or tag == "" then
 		return false
 	end
@@ -129,7 +152,6 @@ local function build_search_command(query, limit, program, files)
 			file_args
 		)
 	elseif program == "git" or program == "git grep" then
-		-- git grep only supports one file, fallback to the first file
 		if #files > 0 then
 			local git_file = files[1]
 			return string.format(
@@ -141,7 +163,6 @@ local function build_search_command(query, limit, program, files)
 		end
 		return nil
 	else
-		-- Default to grep (supports multiple files)
 		return string.format('grep -i -n -h %s "%s" %s 2>/dev/null', limit_arg, escaped_query, file_args)
 	end
 end
@@ -231,6 +252,31 @@ local function token_similarity_score(query, tag)
 	return score
 end
 
+local function score_levenshtein(query, tag)
+	local dist = levenshtein_distance(query:lower(), tag:lower())
+	local score = 100 - (dist / math.max(#query, #tag) * 100)
+	if tag:lower() == query:lower() then
+		score = 1000
+	end
+	if tag:lower():find(query:lower(), 1, true) == 1 then
+		score = score + 20
+	end
+	return score
+end
+
+local function score_token(query, tag)
+	return token_similarity_score(query, tag)
+end
+
+local function score_hybrid(query, tag)
+	local lev_score =
+		math.max(0, 100 - (levenshtein_distance(query:lower(), tag:lower()) / math.max(#query, #tag) * 100))
+	local tok_score = token_similarity_score(query, tag)
+	local exact_bonus = (tag:lower() == query:lower()) and 100 or 0
+	local prefix_bonus = (tag:lower():find(query:lower(), 1, true) == 1) and 20 or 0
+	return (lev_score * 0.35) + (tok_score * 0.35) + exact_bonus + prefix_bonus
+end
+
 -- Prune suggestion cache to stay within limit
 local function prune_suggestion_cache()
 	local opts = config.get()
@@ -251,7 +297,9 @@ end
 
 -- Get suggestions from search program (with algorithm selection and caching)
 function M.get_suggestions(query, limit)
-	ensure_tags_loaded()
+	if not M.ensure_tags_loaded() then
+		return {}
+	end
 	if not query or query == "" or #tag_files == 0 then
 		return {}
 	end
@@ -281,81 +329,53 @@ function M.get_suggestions(query, limit)
 		return {}
 	end
 
-	if algorithm == "levenshtein" or algorithm == "token" or algorithm == "hybrid" then
-		local handle = io.popen(cmd)
-		if handle then
-			local candidates = {}
-			for line in handle:lines() do
-				local tag = line:match("^%s*(.-)%s*$")
-				if tag and tag ~= "" then
-					table.insert(candidates, tag)
-				end
+	local handle = io.popen(cmd)
+	if handle then
+		local candidates = {}
+		for line in handle:lines() do
+			local tag = line:match("^%s*(.-)%s*$")
+			if tag and tag ~= "" then
+				table.insert(candidates, tag)
 			end
-			handle:close()
+		end
+		handle:close()
 
+		if algorithm == "levenshtein" then
 			local scored = {}
 			for _, tag in ipairs(candidates) do
-				local lev_score = 0
-				local token_score = 0
-				local final_score = 0
-
-				if algorithm == "levenshtein" then
-					local dist = levenshtein_distance(query:lower(), tag:lower())
-					lev_score = 100 - (dist / math.max(#query, #tag) * 100)
-					if tag:lower() == query:lower() then
-						lev_score = 1000
-					end
-					if tag:lower():find(query:lower(), 1, true) == 1 then
-						lev_score = lev_score + 20
-					end
-					final_score = lev_score
-				elseif algorithm == "token" then
-					token_score = token_similarity_score(query, tag)
-					final_score = token_score
-				else -- hybrid
-					local dist = levenshtein_distance(query:lower(), tag:lower())
-					lev_score = math.max(0, 100 - (dist / math.max(#query, #tag) * 100))
-
-					token_score = token_similarity_score(query, tag)
-
-					local exact_bonus = 0
-					if tag:lower() == query:lower() then
-						exact_bonus = 100
-					end
-
-					local prefix_bonus = 0
-					if tag:lower():find(query:lower(), 1, true) == 1 then
-						prefix_bonus = 20
-					end
-
-					final_score = (lev_score * 0.35) + (token_score * 0.35) + exact_bonus + prefix_bonus
-				end
-
-				table.insert(scored, { tag = tag, score = final_score })
+				table.insert(scored, { tag = tag, score = score_levenshtein(query, tag) })
 			end
-
 			table.sort(scored, function(a, b)
-				if a.score ~= b.score then
-					return a.score > b.score
-				end
-				return #a.tag < #b.tag
+				return a.score > b.score
 			end)
-
 			for i = 1, math.min(limit, #scored) do
 				table.insert(results, scored[i].tag)
 			end
-		end
-	else
-		-- raw (original behavior)
-		local handle = io.popen(cmd)
-		if handle then
-			for line in handle:lines() do
-				local tag = line:match("^%s*(.-)%s*$")
-				if tag and tag ~= "" then
-					table.insert(results, tag)
-				end
+		elseif algorithm == "token" then
+			local scored = {}
+			for _, tag in ipairs(candidates) do
+				table.insert(scored, { tag = tag, score = score_token(query, tag) })
 			end
-			handle:close()
+			table.sort(scored, function(a, b)
+				return a.score > b.score
+			end)
+			for i = 1, math.min(limit, #scored) do
+				table.insert(results, scored[i].tag)
+			end
+		elseif algorithm == "hybrid" then
+			local scored = {}
+			for _, tag in ipairs(candidates) do
+				table.insert(scored, { tag = tag, score = score_hybrid(query, tag) })
+			end
+			table.sort(scored, function(a, b)
+				return a.score > b.score
+			end)
+			for i = 1, math.min(limit, #scored) do
+				table.insert(results, scored[i].tag)
+			end
+		else
+			-- raw (original behavior)
+			results = candidates
 		end
 	end
 
@@ -443,7 +463,9 @@ end
 
 -- Schedule validation with configurable debounce
 function M.schedule_validate(buf)
-	ensure_tags_loaded()
+	if not M.ensure_tags_loaded() then
+		return
+	end
 	if validate_timer then
 		validate_timer:stop()
 		validate_timer:close()
@@ -461,7 +483,9 @@ end
 
 -- Validate buffer
 function M.validate_buffer(buf)
-	ensure_tags_loaded()
+	if not M.ensure_tags_loaded() then
+		return
+	end
 	if not buf then
 		buf = vim.api.nvim_get_current_buf()
 	else
@@ -585,7 +609,9 @@ end
 
 -- Quick fix
 function M.fix_tag()
-	ensure_tags_loaded()
+	if not M.ensure_tags_loaded() then
+		return
+	end
 	local buf = vim.api.nvim_get_current_buf()
 	local cursor = vim.api.nvim_win_get_cursor(0)
 
@@ -639,7 +665,9 @@ end
 
 -- List invalid tags in quickfix
 function M.list_invalid_tags(buf)
-	ensure_tags_loaded()
+	if not M.ensure_tags_loaded() then
+		return
+	end
 	if not buf then
 		buf = vim.api.nvim_get_current_buf()
 	else
@@ -747,7 +775,9 @@ end
 
 -- Refresh both diagnostics and quickfix list (manual refresh)
 function M.refresh_all(buf)
-	ensure_tags_loaded()
+	if not M.ensure_tags_loaded() then
+		return
+	end
 	if not buf then
 		buf = vim.api.nvim_get_current_buf()
 	else

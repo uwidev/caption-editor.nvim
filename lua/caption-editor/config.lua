@@ -94,23 +94,9 @@ local function validate_config(opts)
 				vim.notify("caption-editor: tag_validation.tag_files must be a table", vim.log.levels.WARN)
 				valid.tag_validation.tag_files = {}
 			else
-				for i, path in ipairs(valid.tag_validation.tag_files) do
-					if type(path) ~= "string" then
-						vim.notify(
-							"caption-editor: each tag file path must be a string, removing entry",
-							vim.log.levels.WARN
-						)
-						valid.tag_validation.tag_files[i] = nil
-					end
-				end
-				-- Remove nil entries
-				local cleaned = {}
-				for _, path in ipairs(valid.tag_validation.tag_files) do
-					if path then
-						table.insert(cleaned, path)
-					end
-				end
-				valid.tag_validation.tag_files = cleaned
+				valid.tag_validation.tag_files = vim.tbl_filter(function(path)
+					return type(path) == "string"
+				end, valid.tag_validation.tag_files)
 			end
 		end
 
