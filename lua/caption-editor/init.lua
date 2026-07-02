@@ -17,6 +17,11 @@ function M.setup(opts)
 		if tag_file and tag_file ~= "" then
 			tags.set_tag_file(tag_file)
 		end
+
+		local custom_tag_file = opts_config.tag_validation.custom_tag_file
+		if custom_tag_file and custom_tag_file ~= "" then
+			tags.set_custom_tag_file(custom_tag_file)
+		end
 	end
 
 	-- Create user commands

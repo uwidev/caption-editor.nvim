@@ -17,6 +17,7 @@ local defaults = {
 	tag_validation = {
 		enabled = false,
 		tag_file = "",
+		custom_tag_file = "",
 		auto_validate = true,
 		show_suggestions = true,
 		debounce_ms = 200,
@@ -26,6 +27,7 @@ local defaults = {
 		max_candidates = 200,
 		suggestion_cache_ttl = 300,
 		suggestion_cache_limit = 100,
+		show_invalid_count = true,
 	},
 }
 
@@ -91,6 +93,14 @@ local function validate_config(opts)
 		if valid.tag_validation.tag_file and type(valid.tag_validation.tag_file) ~= "string" then
 			vim.notify("caption-editor: tag_validation.tag_file must be a string, using default", vim.log.levels.WARN)
 			valid.tag_validation.tag_file = defaults.tag_validation.tag_file
+		end
+
+		if valid.tag_validation.custom_tag_file and type(valid.tag_validation.custom_tag_file) ~= "string" then
+			vim.notify(
+				"caption-editor: tag_validation.custom_tag_file must be a string, using default",
+				vim.log.levels.WARN
+			)
+			valid.tag_validation.custom_tag_file = defaults.tag_validation.custom_tag_file
 		end
 
 		if valid.tag_validation.auto_validate ~= nil and type(valid.tag_validation.auto_validate) ~= "boolean" then
@@ -175,6 +185,17 @@ local function validate_config(opts)
 				vim.log.levels.WARN
 			)
 			valid.tag_validation.suggestion_cache_limit = defaults.tag_validation.suggestion_cache_limit
+		end
+
+		if
+			valid.tag_validation.show_invalid_count ~= nil
+			and type(valid.tag_validation.show_invalid_count) ~= "boolean"
+		then
+			vim.notify(
+				"caption-editor: tag_validation.show_invalid_count must be a boolean, using default",
+				vim.log.levels.WARN
+			)
+			valid.tag_validation.show_invalid_count = defaults.tag_validation.show_invalid_count
 		end
 	end
 

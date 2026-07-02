@@ -8,8 +8,9 @@ local config = require("caption-editor.config")
 -- State
 local valid_tags = {}
 local tag_file_path = ""
+local custom_tag_file_path = ""
 local tags_loaded = false
-local suggestion_cache = {}  -- key -> { results = [...], timestamp = number }
+local suggestion_cache = {} -- key -> { results = [...], timestamp = number }
 local diagnostic_cache = {}
 local validate_timer = nil
 local spell_ns = vim.api.nvim_create_namespace("caption-spell")
@@ -20,10 +21,71 @@ function M.get_invalid_count()
 	return invalid_count
 end
 
--- Store the tag file path for lazy loading
+-- Store tag file paths
 function M.set_tag_file(filepath)
 	tag_file_path = filepath
 	tags_loaded = false
+end
+
+function M.set_custom_tag_file(filepath)
+	custom_tag_file_path = filepath
+	tags_loaded = false
+end
+
+-- Helper to load a single file
+local function load_single_file(filepath, file_label)
+	if not filepath or filepath == "" then
+		return {}
+	end
+	local lines = vim.fn.readfile(filepath)
+	if not lines then
+		vim.notify("caption-editor: Failed to load " .. file_label .. " tag file: " .. filepath, vim.log.levels.WARN)
+		return {}
+	end
+	local tags = {}
+	for _, line in ipairs(lines) do
+		local tag = line:match("^%s*(.-)%s*$")
+		if tag and tag ~= "" then
+			tags[tag] = true
+		end
+	end
+	return tags
+end
+
+-- Load tags from both files (lazy)
+function M.load_tags()
+	valid_tags = {}
+	local loaded_count = 0
+
+	if tag_file_path and tag_file_path ~= "" then
+		local main_tags = load_single_file(tag_file_path, "main")
+		for tag, _ in pairs(main_tags) do
+			valid_tags[tag] = true
+		end
+		loaded_count = loaded_count + vim.tbl_count(main_tags)
+		vim.notify("caption-editor: Loaded " .. vim.tbl_count(main_tags) .. " tags from main file", vim.log.levels.INFO)
+	end
+
+	if custom_tag_file_path and custom_tag_file_path ~= "" then
+		local custom_tags = load_single_file(custom_tag_file_path, "custom")
+		for tag, _ in pairs(custom_tags) do
+			valid_tags[tag] = true
+		end
+		loaded_count = loaded_count + vim.tbl_count(custom_tags)
+		if vim.tbl_count(custom_tags) > 0 then
+			vim.notify(
+				"caption-editor: Loaded " .. vim.tbl_count(custom_tags) .. " tags from custom file",
+				vim.log.levels.INFO
+			)
+		end
+	end
+
+	if loaded_count > 0 then
+		vim.notify("caption-editor: Total " .. vim.tbl_count(valid_tags) .. " tags loaded", vim.log.levels.INFO)
+	end
+
+	suggestion_cache = {}
+	diagnostic_cache = {}
 end
 
 -- Ensure tags are loaded
@@ -31,57 +93,73 @@ local function ensure_tags_loaded()
 	if tags_loaded then
 		return
 	end
-	if tag_file_path == "" then
+	if tag_file_path == "" and custom_tag_file_path == "" then
 		vim.notify("caption-editor: No tag file configured. Set tag_validation.tag_file.", vim.log.levels.WARN)
 		return
 	end
-	M.load_tags(tag_file_path)
+	M.load_tags()
 	tags_loaded = true
 end
 
--- Prune suggestion cache to stay within limit
-local function prune_suggestion_cache()
-	local opts = config.get()
-	local limit = opts.tag_validation.suggestion_cache_limit or 100
-	local keys = {}
-	for key, _ in pairs(suggestion_cache) do
-		table.insert(keys, key)
+-- Check if tag is valid (this was missing!)
+function M.is_valid_tag(tag)
+	ensure_tags_loaded()
+	if not tag or tag == "" then
+		return false
 	end
-	if #keys > limit then
-		table.sort(keys, function(a, b)
-			return suggestion_cache[a].timestamp < suggestion_cache[b].timestamp
-		end)
-		for i = limit + 1, #keys do
-			suggestion_cache[keys[i]] = nil
-		end
-	end
+	return valid_tags[tag] or false
 end
 
--- Build search command based on program
-local function build_search_command(query, limit, program, tag_file)
+-- Build search command (supports multiple files, suppresses file names)
+local function build_search_command(query, limit, program, tag_file, custom_tag_file)
 	local limit_arg = limit and limit > 0 and ("-m " .. limit) or ""
 	local escaped_query = query:gsub('"', '\\"')
 
+	local files = {}
+	if tag_file and tag_file ~= "" then
+		table.insert(files, tag_file)
+	end
+	if custom_tag_file and custom_tag_file ~= "" then
+		table.insert(files, custom_tag_file)
+	end
+
+	if #files == 0 then
+		return nil
+	end
+
+	local file_args = table.concat(files, " ")
+
 	if program == "rg" or program == "ripgrep" then
-		return string.format('rg -i -N %s "%s" "%s" 2>/dev/null', limit_arg, escaped_query, tag_file)
+		return string.format('rg -i -N --no-filename %s "%s" %s 2>/dev/null', limit_arg, escaped_query, file_args)
 	elseif program == "ag" then
-		return string.format('ag -i --nocolor --nogroup %s "%s" "%s" 2>/dev/null', limit_arg, escaped_query, tag_file)
-	elseif program == "ack" then
 		return string.format(
-			'ack -i --no-color --no-group %s "%s" "%s" 2>/dev/null',
+			'ag -i --nocolor --nogroup --nofilename %s "%s" %s 2>/dev/null',
 			limit_arg,
 			escaped_query,
-			tag_file
+			file_args
+		)
+	elseif program == "ack" then
+		return string.format(
+			'ack -i --no-color --no-group --no-filename %s "%s" %s 2>/dev/null',
+			limit_arg,
+			escaped_query,
+			file_args
 		)
 	elseif program == "git" or program == "git grep" then
-		return string.format(
-			'git -C "%s" grep -i -n %s "%s" 2>/dev/null',
-			vim.fn.fnamemodify(tag_file, ":h"),
-			limit_arg,
-			escaped_query
-		)
+		-- git grep only supports one file, fallback to main file
+		local git_file = tag_file or custom_tag_file
+		if git_file then
+			return string.format(
+				'git -C "%s" grep -i -n -h %s "%s" 2>/dev/null',
+				vim.fn.fnamemodify(git_file, ":h"),
+				limit_arg,
+				escaped_query
+			)
+		end
+		return nil
 	else
-		return string.format('grep -i -n %s "%s" "%s" 2>/dev/null', limit_arg, escaped_query, tag_file)
+		-- Default to grep (supports multiple files)
+		return string.format('grep -i -n -h %s "%s" %s 2>/dev/null', limit_arg, escaped_query, file_args)
 	end
 end
 
@@ -170,76 +248,32 @@ local function token_similarity_score(query, tag)
 	return score
 end
 
--- Load tags from file (called lazily)
-function M.load_tags(filepath)
-	if not filepath or filepath == "" then
-		return
-	end
-
-	tag_file_path = filepath
-
-	local lines = vim.fn.readfile(filepath)
-	if not lines then
-		vim.notify("caption-editor: Failed to load tag file: " .. filepath, vim.log.levels.ERROR)
-		return
-	end
-
-	valid_tags = {}
-	for _, line in ipairs(lines) do
-		local tag = line:match("^%s*(.-)%s*$")
-		if tag and tag ~= "" then
-			valid_tags[tag] = true
-		end
-	end
-
-	suggestion_cache = {}
-	diagnostic_cache = {}
-
-	vim.notify("caption-editor: Loaded " .. vim.tbl_count(valid_tags) .. " tags", vim.log.levels.INFO)
-end
-
--- Check if tag is valid
-function M.is_valid_tag(tag)
-	ensure_tags_loaded()
-	if not tag or tag == "" then
-		return false
-	end
-	return valid_tags[tag] or false
-end
-
--- Check if a line is in a tags section
-function M.is_in_tags_section(buf, line_num)
+-- Prune suggestion cache to stay within limit
+local function prune_suggestion_cache()
 	local opts = config.get()
-	local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-
-	local section_index = 1
-	local separator_count = 0
-
-	for i = 0, line_num - 1 do
-		local trimmed = lines[i + 1] and lines[i + 1]:match("^%s*(.-)%s*$") or ""
-		if trimmed == opts.section_delimiter then
-			separator_count = separator_count + 1
-			if i < line_num then
-				section_index = separator_count + 1
-			end
+	local limit = opts.tag_validation.suggestion_cache_limit or 100
+	local keys = {}
+	for key, _ in pairs(suggestion_cache) do
+		table.insert(keys, key)
+	end
+	if #keys > limit then
+		table.sort(keys, function(a, b)
+			return suggestion_cache[a].timestamp < suggestion_cache[b].timestamp
+		end)
+		for i = limit + 1, #keys do
+			suggestion_cache[keys[i]] = nil
 		end
 	end
-
-	local section_type = "tags"
-	if section_index <= #opts.section_types then
-		section_type = opts.section_types[section_index]
-	end
-
-	return section_type == "tags"
 end
 
 -- Get suggestions from search program (with algorithm selection and caching)
 function M.get_suggestions(query, limit)
 	ensure_tags_loaded()
-	if not query or query == "" or tag_file_path == "" then
+	if not query or query == "" or (tag_file_path == "" and custom_tag_file_path == "") then
 		return {}
 	end
 
+	-- Check cache
 	local opts = config.get()
 	local ttl = opts.tag_validation.suggestion_cache_ttl or 300
 	local now = os.time()
@@ -259,19 +293,19 @@ function M.get_suggestions(query, limit)
 
 	local results = {}
 
+	local cmd = build_search_command(query, max_candidates, program, tag_file_path, custom_tag_file_path)
+	if not cmd then
+		return {}
+	end
+
 	if algorithm == "levenshtein" or algorithm == "token" or algorithm == "hybrid" then
-		local cmd = build_search_command(query, max_candidates, program, tag_file_path)
 		local handle = io.popen(cmd)
 		if handle then
 			local candidates = {}
 			for line in handle:lines() do
 				local tag = line:match("^%s*(.-)%s*$")
 				if tag and tag ~= "" then
-					tag = tag:gsub("^%d+:", "")
-					tag = tag:match("^%s*(.-)%s*$")
-					if tag and tag ~= "" then
-						table.insert(candidates, tag)
-					end
+					table.insert(candidates, tag)
 				end
 			end
 			handle:close()
@@ -329,17 +363,13 @@ function M.get_suggestions(query, limit)
 			end
 		end
 	else
-		local cmd = build_search_command(query, limit, program, tag_file_path)
+		-- raw (original behavior)
 		local handle = io.popen(cmd)
 		if handle then
 			for line in handle:lines() do
 				local tag = line:match("^%s*(.-)%s*$")
 				if tag and tag ~= "" then
-					tag = tag:gsub("^%d+:", "")
-					tag = tag:match("^%s*(.-)%s*$")
-					if tag and tag ~= "" then
-						table.insert(results, tag)
-					end
+					table.insert(results, tag)
 				end
 			end
 			handle:close()
@@ -353,6 +383,32 @@ function M.get_suggestions(query, limit)
 	prune_suggestion_cache()
 
 	return results
+end
+
+-- Check if a line is in a tags section
+function M.is_in_tags_section(buf, line_num)
+	local opts = config.get()
+	local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+
+	local section_index = 1
+	local separator_count = 0
+
+	for i = 0, line_num - 1 do
+		local trimmed = lines[i + 1] and lines[i + 1]:match("^%s*(.-)%s*$") or ""
+		if trimmed == opts.section_delimiter then
+			separator_count = separator_count + 1
+			if i < line_num then
+				section_index = separator_count + 1
+			end
+		end
+	end
+
+	local section_type = "tags"
+	if section_index <= #opts.section_types then
+		section_type = opts.section_types[section_index]
+	end
+
+	return section_type == "tags"
 end
 
 -- Get words from a line with their positions
