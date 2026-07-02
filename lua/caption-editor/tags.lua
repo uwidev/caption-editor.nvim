@@ -119,74 +119,6 @@ function M.is_valid_tag(tag)
 	return valid_tags[tag] or false
 end
 
--- Generate query variations for broader search
-local function generate_query_variations(query)
-	local variations = { query }
-	local seen = {}
-	seen[query] = true
-
-	-- Remove trailing 's' (plural to singular)
-	if query:match("s$") then
-		local alt = query:sub(1, -2)
-		if not seen[alt] then
-			table.insert(variations, alt)
-			seen[alt] = true
-		end
-	end
-
-	-- Remove trailing '_s' (booru plural format)
-	if query:match("_s$") then
-		local alt = query:sub(1, -3)
-		if not seen[alt] then
-			table.insert(variations, alt)
-			seen[alt] = true
-		end
-	end
-
-	-- If query has multiple words, try removing the last word
-	local words = {}
-	for w in query:gmatch("%S+") do
-		table.insert(words, w)
-	end
-	if #words > 1 then
-		local alt = table.concat(words, " ", 1, #words - 1)
-		if not seen[alt] and alt ~= "" then
-			table.insert(variations, alt)
-			seen[alt] = true
-		end
-	end
-
-	return variations
-end
-
--- Fetch candidates from search tool with query variations
-local function fetch_candidates(query, max_candidates, program)
-	local candidates = {}
-	local seen = {}
-
-	-- Generate variations
-	local variations = generate_query_variations(query)
-
-	for _, q in ipairs(variations) do
-		local cmd = build_search_command(q, max_candidates, program, tag_files)
-		if cmd then
-			local handle = io.popen(cmd)
-			if handle then
-				for line in handle:lines() do
-					local tag = line:match("^%s*(.-)%s*$")
-					if tag and tag ~= "" and not seen[tag] then
-						seen[tag] = true
-						table.insert(candidates, tag)
-					end
-				end
-				handle:close()
-			end
-		end
-	end
-
-	return candidates
-end
-
 -- Build search command (supports multiple files, suppresses file names)
 local function build_search_command(query, limit, program, files)
 	local limit_arg = limit and limit > 0 and ("-m " .. limit) or ""
@@ -228,6 +160,89 @@ local function build_search_command(query, limit, program, files)
 	else
 		return string.format('grep -i -n -h %s "%s" %s 2>/dev/null', limit_arg, escaped_query, file_args)
 	end
+end
+
+-- Generate query variations for broader search
+local function generate_query_variations(query)
+	local variations = { query }
+	local seen = {}
+	seen[query] = true
+
+	-- Remove trailing 's' (plural to singular)
+	if query:match("s$") then
+		local alt = query:sub(1, -2)
+		if not seen[alt] then
+			table.insert(variations, alt)
+			seen[alt] = true
+		end
+	end
+
+	-- Remove trailing '_s' (booru plural format)
+	if query:match("_s$") then
+		local alt = query:sub(1, -3)
+		if not seen[alt] then
+			table.insert(variations, alt)
+			seen[alt] = true
+		end
+	end
+
+	-- If query has multiple words, try removing the last word
+	local words = {}
+	for w in query:gmatch("%S+") do
+		table.insert(words, w)
+	end
+	if #words > 1 then
+		local alt = table.concat(words, " ", 1, #words - 1)
+		if not seen[alt] and alt ~= "" then
+			table.insert(variations, alt)
+			seen[alt] = true
+		end
+	end
+
+	-- Try splitting by underscores if present
+	if query:find("_") then
+		local parts = {}
+		for p in query:gmatch("[^_]+") do
+			table.insert(parts, p)
+		end
+		if #parts > 1 then
+			-- Try without the last part
+			local alt = table.concat(parts, "_", 1, #parts - 1)
+			if not seen[alt] and alt ~= "" then
+				table.insert(variations, alt)
+				seen[alt] = true
+			end
+		end
+	end
+
+	return variations
+end
+
+-- Fetch candidates from search tool with query variations
+local function fetch_candidates(query, max_candidates, program)
+	local candidates = {}
+	local seen = {}
+
+	local variations = generate_query_variations(query)
+
+	for _, q in ipairs(variations) do
+		local cmd = build_search_command(q, max_candidates, program, tag_files)
+		if cmd then
+			local handle = io.popen(cmd)
+			if handle then
+				for line in handle:lines() do
+					local tag = line:match("^%s*(.-)%s*$")
+					if tag and tag ~= "" and not seen[tag] then
+						seen[tag] = true
+						table.insert(candidates, tag)
+					end
+				end
+				handle:close()
+			end
+		end
+	end
+
+	return candidates
 end
 
 -- Levenshtein distance (Lua implementation)
@@ -356,89 +371,6 @@ local function prune_suggestion_cache()
 			suggestion_cache[keys[i]] = nil
 		end
 	end
-end
-
--- Generate query variations for broader search
-local function generate_query_variations(query)
-	local variations = { query }
-	local seen = {}
-	seen[query] = true
-
-	-- Remove trailing 's' (plural to singular)
-	if query:match("s$") then
-		local alt = query:sub(1, -2)
-		if not seen[alt] then
-			table.insert(variations, alt)
-			seen[alt] = true
-		end
-	end
-
-	-- Remove trailing '_s' (booru plural format)
-	if query:match("_s$") then
-		local alt = query:sub(1, -3)
-		if not seen[alt] then
-			table.insert(variations, alt)
-			seen[alt] = true
-		end
-	end
-
-	-- If query has multiple words, try removing the last word
-	local words = {}
-	for w in query:gmatch("%S+") do
-		table.insert(words, w)
-	end
-	if #words > 1 then
-		local alt = table.concat(words, " ", 1, #words - 1)
-		if not seen[alt] and alt ~= "" then
-			table.insert(variations, alt)
-			seen[alt] = true
-		end
-	end
-
-	-- Try splitting by underscores if present
-	if query:find("_") then
-		local parts = {}
-		for p in query:gmatch("[^_]+") do
-			table.insert(parts, p)
-		end
-		if #parts > 1 then
-			-- Try without the last part
-			local alt = table.concat(parts, "_", 1, #parts - 1)
-			if not seen[alt] and alt ~= "" then
-				table.insert(variations, alt)
-				seen[alt] = true
-			end
-		end
-	end
-
-	return variations
-end
-
--- Fetch candidates from search tool with query variations
-local function fetch_candidates(query, max_candidates, program)
-	local candidates = {}
-	local seen = {}
-
-	local variations = generate_query_variations(query)
-
-	for _, q in ipairs(variations) do
-		local cmd = build_search_command(q, max_candidates, program, tag_files)
-		if cmd then
-			local handle = io.popen(cmd)
-			if handle then
-				for line in handle:lines() do
-					local tag = line:match("^%s*(.-)%s*$")
-					if tag and tag ~= "" and not seen[tag] then
-						seen[tag] = true
-						table.insert(candidates, tag)
-					end
-				end
-				handle:close()
-			end
-		end
-	end
-
-	return candidates
 end
 
 -- Get suggestions from search program (with algorithm selection and caching)
@@ -613,7 +545,7 @@ function M.schedule_validate(buf)
 	end, debounce_ms)
 end
 
--- Validate buffer
+-- Validate buffer (with duplicate detection)
 function M.validate_buffer(buf)
 	if not M.ensure_tags_loaded() then
 		return
@@ -660,6 +592,7 @@ function M.validate_buffer(buf)
 	local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
 	local tag_diagnostics = {}
 	local spell_diagnostics = {}
+	local duplicate_groups = {} -- normalized tag -> list of occurrences
 
 	for line_num, line in ipairs(lines) do
 		local trimmed = line:match("^%s*(.-)%s*$")
@@ -668,9 +601,9 @@ function M.validate_buffer(buf)
 			local in_tags_section = M.is_in_tags_section(buf, line_num - 1)
 
 			if in_tags_section then
+				-- Check validity
 				if not M.is_valid_tag(trimmed) then
 					local col = line:find(trimmed) or 1
-
 					table.insert(tag_diagnostics, {
 						bufnr = buf,
 						lnum = line_num - 1,
@@ -681,7 +614,20 @@ function M.validate_buffer(buf)
 						source = "caption-editor",
 					})
 				end
+
+				-- Collect for duplicate detection (normalize to lower case)
+				local normalized = trimmed:lower()
+				if not duplicate_groups[normalized] then
+					duplicate_groups[normalized] = {}
+				end
+				local col = line:find(trimmed) or 1
+				table.insert(duplicate_groups[normalized], {
+					line = line_num,
+					col = col,
+					tag = trimmed,
+				})
 			else
+				-- NL section: spellcheck
 				if spell_enabled then
 					for _, word_info in ipairs(get_words(line)) do
 						local word = word_info.word
@@ -699,6 +645,23 @@ function M.validate_buffer(buf)
 						end
 					end
 				end
+			end
+		end
+	end
+
+	-- Add duplicate diagnostics
+	for _, occurrences in pairs(duplicate_groups) do
+		if #occurrences > 1 then
+			for _, occ in ipairs(occurrences) do
+				table.insert(tag_diagnostics, {
+					bufnr = buf,
+					lnum = occ.line - 1,
+					col = occ.col - 1,
+					end_col = occ.col + #occ.tag - 1,
+					severity = vim.diagnostic.severity.WARN,
+					message = "Duplicate tag: " .. occ.tag .. " (appears " .. #occurrences .. " times)",
+					source = "caption-editor",
+				})
 			end
 		end
 	end
@@ -722,7 +685,7 @@ function M.get_tag_under_cursor()
 	end
 
 	-- Find the position of the trimmed tag within the original line
-	local start = line:find(trimmed) - 1  -- 0-indexed column
+	local start = line:find(trimmed) - 1 -- 0-indexed column
 	local end_pos = start + #trimmed
 
 	return trimmed, start, end_pos
@@ -784,9 +747,7 @@ function M.is_quickfix_open()
 	return quickfix_open
 end
 
--- List invalid tags in quickfix
--- If reset_idx is true, the selection index is set to 1 (first entry),
--- otherwise it preserves the current selection index.
+-- List invalid tags in quickfix (includes duplicates)
 function M.list_invalid_tags(buf, reset_idx)
 	if not M.ensure_tags_loaded() then
 		return
@@ -820,28 +781,58 @@ function M.list_invalid_tags(buf, reset_idx)
 		return
 	end
 
+	local duplicate_groups = {} -- normalized -> list of occurrences
+
 	for line_num, line in ipairs(lines) do
 		local trimmed = line:match("^%s*(.-)%s*$")
 		if trimmed and trimmed ~= "" and trimmed ~= "|||" then
-			if M.is_in_tags_section(buf, line_num - 1) and not M.is_valid_tag(trimmed) then
+			if M.is_in_tags_section(buf, line_num - 1) then
+				-- Check validity
+				if not M.is_valid_tag(trimmed) then
+					local col = line:find(trimmed) or 1
+					local all = M.get_suggestions(trimmed)
+					local display = {}
+					for i = 1, math.min(3, #all) do
+						table.insert(display, all[i])
+					end
+					local text = "Not a booru tag: " .. trimmed
+					if #display > 0 then
+						local suffix = #all > 3 and (" (+" .. (#all - 3) .. " more)") or ""
+						text = text .. " (suggestions: " .. table.concat(display, ", ") .. suffix .. ")"
+					end
+					table.insert(qf_list, {
+						bufnr = buf,
+						lnum = line_num,
+						col = col,
+						text = text,
+						type = "W",
+					})
+				end
+
+				-- Collect duplicates
+				local normalized = trimmed:lower()
+				if not duplicate_groups[normalized] then
+					duplicate_groups[normalized] = {}
+				end
 				local col = line:find(trimmed) or 1
-				local all = M.get_suggestions(trimmed)
-				local display = {}
-				for i = 1, math.min(3, #all) do
-					table.insert(display, all[i])
-				end
+				table.insert(duplicate_groups[normalized], {
+					line = line_num,
+					col = col,
+					tag = trimmed,
+				})
+			end
+		end
+	end
 
-				local text = "Not a booru tag: " .. trimmed
-				if #display > 0 then
-					local suffix = #all > 3 and (" (+" .. (#all - 3) .. " more)") or ""
-					text = text .. " (suggestions: " .. table.concat(display, ", ") .. suffix .. ")"
-				end
-
+	-- Add duplicate entries to quickfix
+	for _, occurrences in pairs(duplicate_groups) do
+		if #occurrences > 1 then
+			for _, occ in ipairs(occurrences) do
 				table.insert(qf_list, {
 					bufnr = buf,
-					lnum = line_num,
-					col = col,
-					text = text,
+					lnum = occ.line,
+					col = occ.col,
+					text = "Duplicate tag: " .. occ.tag .. " (appears " .. #occurrences .. " times)",
 					type = "W",
 				})
 			end
