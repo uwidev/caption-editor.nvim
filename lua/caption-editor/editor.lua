@@ -217,7 +217,7 @@ local function get_buffer_content(buf)
 	return table.concat(lines, "\n")
 end
 
--- Set buffer content
+-- Set buffer content without triggering modified notification
 local function set_buffer_content(buf, content, no_undo)
 	if not buf or not vim.api.nvim_buf_is_valid(buf) then
 		return
@@ -244,6 +244,9 @@ local function set_buffer_content(buf, content, no_undo)
 	end
 
 	vim.api.nvim_set_option_value("modifiable", was_modifiable, { buf = buf })
+
+	-- Mark buffer as not modified (suppresses the warning)
+	vim.api.nvim_set_option_value("modified", false, { buf = buf })
 end
 
 -- Create an undo marker that the split/unsplit can join with
